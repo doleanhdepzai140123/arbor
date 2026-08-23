@@ -1,0 +1,4 @@
+fn main() {
+  var xs: [Int] = [1]
+  println(xs.get(5).unwrap())
+}

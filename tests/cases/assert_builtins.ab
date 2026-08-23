@@ -1,0 +1,15 @@
+fn assert_demo() {
+  let x = 2 + 2
+  assert(x == 4)
+  assert_eq(x, 4)
+}
+
+/// Adds two numbers together.
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
+fn main() {
+  assert_demo()
+  println("2 + 3 = {add(2, 3)}")
+}

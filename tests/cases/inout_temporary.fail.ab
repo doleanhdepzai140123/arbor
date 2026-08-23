@@ -1,0 +1,8 @@
+fn bump(xs: inout [Int]) -> Int {
+  xs.push(1)
+  xs.len()
+}
+
+fn main() {
+  println(bump([9, 9]))
+}

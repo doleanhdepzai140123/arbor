@@ -1,0 +1,78 @@
+// graph.ab — đồ thị bên trong "vùng": node sống trong Table, cạnh là Handle.
+// Đây là cách ARBOR làm dữ liệu liên kết mà KHÔNG CẦN con trỏ, không GC,
+// không borrow checker: handle tuyến tính + generation check.
+
+struct Node {
+  value: Int
+  next: [Handle[Node]]
+}
+
+fn main() {
+  var list = Table[Node].new()
+
+  let a = list.insert(Node { value: 1, next: [] })
+  let b = list.insert(Node { value: 2, next: [] })
+  let c = list.insert(Node { value: 3, next: [] })
+
+  // Dựng liên kết: a -> b -> c (cùng một Table = cùng một vùng sống chung)
+  set_next(list, a, b)
+  set_next(list, b, c)
+
+  println("duyet tu a:")
+  walk(list, a)
+
+  // Xóa node giữa: handle tới c vẫn hợp lệ, handle tới b thành None.
+  let _removed = list.remove(b)
+  let newnext = next_of(list, a)
+  match newnext {
+    Some(n) => {
+      // n la Node copy; duyet tiep
+    }
+    None => println("a khong con next")
+  }
+  println("sau khi xoa b, duyet lai:")
+  walk(list, a)
+}
+
+fn set_next(tbl: inout Table[Node], from: in Handle[Node], to: in Handle[Node]) {
+  match tbl.get(from) {
+    Some(node) => {
+      var updated = Node { value: node.value, next: node.next }
+      updated.next.push(to)
+      tbl.set(from, updated)
+    }
+    None => println("set_next: node da chet")
+  }
+}
+
+fn next_of(tbl: in Table[Node], h: in Handle[Node]) -> Option[Node] {
+  tbl.get(h)
+}
+
+fn walk(tbl: in Table[Node], start: in Handle[Node]) {
+  var cursor = start
+  var guard = 0
+  while guard < 10 {
+    guard = guard + 1
+    match tbl.get(cursor) {
+      Some(node) => {
+        println("  node {node.value}")
+        if node.next.len() == 0 {
+          return
+        }
+        let nxt = node.next.get(0)
+        match nxt {
+          Some(h) => {
+            drop(cursor)
+            cursor = h
+          }
+          None => return
+        }
+      }
+      None => {
+        println("  <handle lac hau — di qua node da xoa>")
+        return
+      }
+    }
+  }
+}

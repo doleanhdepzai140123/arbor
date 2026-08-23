@@ -1,0 +1,29 @@
+## Node
+node_modules/
+*.log
+
+## ARBOR build artifacts
+*.exe
+*.cs
+!src/**/*.cs
+!tests/cases/**
+tests/*.exe
+tests/*.cs
+tests/fmt_test.ab
+
+## OS
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+## IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+## Build outputs
+target/
+dist/
+out/

@@ -1,0 +1,14 @@
+fn fib(n: Int) -> Int {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+  var i = 0
+  var total = 0
+  while i < 40000000 {
+    total += i % 7
+    i += 1
+  }
+  println("fib(25) = {fib(25)}")
+  println("loop = {total}")
+}

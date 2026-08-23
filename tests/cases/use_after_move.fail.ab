@@ -1,0 +1,5 @@
+fn main() {
+  var data: [Int] = [1, 2, 3]
+  let copy2 = data
+  println("{data.len()}")
+}

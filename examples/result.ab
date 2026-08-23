@@ -1,0 +1,31 @@
+// result.ab — lỗi là giá trị: Result[T, E] và toán tử `?` đẩy lỗi lên trên,
+// không có exception ẩn, không có null. Mọi đường đi lỗi đều hiện hình trong chữ ký.
+
+fn parse_positive(s: Str) -> Result[Int, Str] {
+  let n = s.to_int()?
+  if n <= 0 {
+    Err("phai la so duong")
+  } else {
+    Ok(n)
+  }
+}
+
+fn describe(s: Str) -> Str {
+  match parse_positive(s) {
+    Ok(n) => "hop le: {n}"
+    Err(why) => "loi: {why}"
+  }
+}
+
+fn main() {
+  println(describe("42"))
+  println(describe("-7"))
+  println(describe("abc"))
+
+  // Option cho giá trị vắng mặt:
+  var xs: [Int] = [10, 20, 30]
+  match xs.get(5) {
+    Some(v) => println("xs[5] = {v}")
+    None => println("xs[5] khong ton tai — va do la DUY NHAT kha nang")
+  }
+}

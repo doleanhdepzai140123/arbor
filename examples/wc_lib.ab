@@ -1,0 +1,15 @@
+fn count_words(text: Str) -> Int {
+  var n = 0
+  for _chunk in text.split(" ") {
+    n += 1
+  }
+  n
+}
+
+fn count_lines(text: Str) -> Int {
+  var n = 0
+  for _l in text.split("\n") {
+    n += 1
+  }
+  n - 1
+}

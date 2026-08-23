@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup .NET Framework (csc)
+        shell: pwsh
+        run: |
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (Test-Path $csc) { Write-Host "csc found at $csc" }
+          else { Write-Host "csc not found — native tests will be skipped" }
+
+      - name: Conformance tests (reference VM)
+        run: node tests/run_tests.mjs
+
+      - name: Native parity tests (compiled .exe vs VM)
+        run: node tests/native_parity.mjs
+
+      - name: Formatter smoke test
+        run: |
+          node bin/arbor.js fmt examples/wordcount.ab > $null
+          echo "formatter ok"
+
+      - name: LSP smoke test
+        shell: pwsh
+        run: |
+          node -e "
+            import('./src/lsp.js').then(({ Server }) => {
+              const s = new Server();
+              s.send = () => {};
+              s.dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+              s.dispatch({ jsonrpc: '2.0', method: 'textDocument/didOpen', params: { textDocument: { uri: 'file:///t.ab', text: 'fn main() { println(1) }', version: 1 } } });
+              console.log('LSP ok');
+            });
+          "

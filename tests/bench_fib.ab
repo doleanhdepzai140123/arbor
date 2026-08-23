@@ -1,0 +1,11 @@
+fn fib(n: Int) -> Int {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+  let start = std.time.now_ms()
+  let result = fib(32)
+  let elapsed = std.time.now_ms() - start
+  println("fib(32) = {result}")
+  println("elapsed_ms = {elapsed}")
+}

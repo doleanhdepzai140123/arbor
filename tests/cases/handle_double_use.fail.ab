@@ -1,0 +1,10 @@
+fn consume(h: Handle[Int]) -> Int {
+  42
+}
+
+fn main() {
+  var t = Table[Int].new()
+  let h = t.insert(7)
+  let a = consume(h)
+  let b = consume(h)
+}

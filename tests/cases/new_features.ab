@@ -1,0 +1,21 @@
+const LIMIT = 1000
+const HALF = LIMIT / 2
+
+fn main() {
+  var total = 0
+  for i in 0..LIMIT {
+    if i % 3 == 0 { total += 1 }
+  }
+  println("multiples of 3 below {LIMIT}: {total}")
+  println("half = {HALF}")
+
+  var x = 10
+  x *= 4
+  x -= 5
+  x += 1
+  println("x = {x}")
+
+  var f = 2.5
+  f *= 2.0
+  println("f = {f}")
+}

@@ -1,0 +1,43 @@
+// handles.ab — Handle[T] tuyến tính + generation check:
+// tham chiếu bền vững giữa các vùng dữ liệu, stale handle KHÔNG BAO GIỜ
+// đọc nhầm dữ liệu — nó trả về None (hoặc bị phát hiện), không bao giờ crash âm thầm.
+
+struct Enemy {
+  name: Str
+  hp: Int
+}
+
+fn main() {
+  var bestiary = Table[Enemy].new()
+
+  let goblin = bestiary.insert(Enemy { name: "Goblin", hp: 12 })
+  let troll  = bestiary.insert(Enemy { name: "Troll",  hp: 40 })
+
+  print_enemy(bestiary, goblin)
+  print_enemy(bestiary, troll)
+
+  // Tiêu diệt Troll: slot bị thu hồi, generation tăng.
+  let dead = bestiary.remove(troll)
+  match dead {
+    Some(e) => println("{e.name} da chet. Slot duoc giai phong.")
+    None => println("khong tim thay")
+  }
+
+  // Handle `troll` giờ LẠC HẬU (stale). Đọc nó: an toàn, nhận None.
+  let ghost = bestiary.get(troll)
+  match ghost {
+    Some(e) => println("BUG! doc nham: {e.name}")
+    None => println("handle cu -> None (an toan tuyet doi)")
+  }
+
+  // Goblin vẫn sống khỏe.
+  print_enemy(bestiary, goblin)
+  println("con song: {bestiary.len()}")
+}
+
+fn print_enemy(tbl: in Table[Enemy], h: in Handle[Enemy]) {
+  match tbl.get(h) {
+    Some(e) => println("[{e.name}] hp = {e.hp}")
+    None => println("<khong ton tai>")
+  }
+}

@@ -1,0 +1,32 @@
+fn main() {
+  var xs: [Int] = [3, 1, 2]
+  xs.push(5)
+  println(xs.len())
+  println(xs.first().unwrap())
+  println(xs.last().unwrap())
+
+  var ys: [Int] = []
+  println(ys.pop().is_none())
+  let taken = xs.take(0)
+  println(taken)
+  println(xs.get(0).is_none())
+
+  var sorted: [Int] = [4, 2, 9, 1]
+  sorted.sort_by(fn(a: Int, b: Int) -> Int { a - b })
+  for v in sorted {
+    println("s {v}")
+  }
+
+  var m = Map[Str, Int].new()
+  m.insert("a", 1)
+  m.insert("b", 2)
+  println(m.get("a").unwrap())
+  println(m.contains_key("z"))
+  println(m.len())
+
+  var st = Set[Int].new()
+  st.insert(1)
+  st.insert(1)
+  st.insert(2)
+  println(st.len())
+}

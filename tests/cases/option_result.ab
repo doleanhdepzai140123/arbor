@@ -1,0 +1,32 @@
+fn safe_div(a: Int, b: Int) -> Result[Int, Str] {
+  if b == 0 {
+    Err("chia cho khong")
+  } else {
+    Ok(a / b)
+  }
+}
+
+fn chain(a: Int, b: Int) -> Result[Int, Str] {
+  let x = safe_div(a, b)?
+  let y = safe_div(x, 2)?
+  Ok(y)
+}
+
+fn first_or(xs: [Int], i: Int) -> Option[Int] {
+  xs.get(i)
+}
+
+fn main() {
+  match chain(100, 5) {
+    Ok(v) => println("ok: {v}")
+    Err(e) => println("err: {e}")
+  }
+  match chain(100, 0) {
+    Ok(v) => println("ok: {v}")
+    Err(e) => println("err: {e}")
+  }
+
+  println(first_or([7, 8], 0).unwrap())
+  println(first_or([7, 8], 9).unwrap_or(-1))
+  println(first_or([7, 8], 9).is_none())
+}

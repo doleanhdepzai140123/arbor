@@ -1,0 +1,34 @@
+// regions.ab — vùng nhớ có tuổi đời từ vựng:
+// mọi thứ cấp phát trong `region` chết CÙNG NHAU khi khối kết thúc.
+use std.mem.{live, allocs}
+
+struct Particle {
+  x: Int
+  y: Int
+  life: Int
+}
+
+fn main() {
+  println("truoc region: {live()} allocation(s) dang song")
+
+  region scratch {
+    var particles: [Particle] = []
+    var i = 0
+    while i < 1000 {
+      particles.push(Particle { x: i, y: i * 2, life: 60 })
+      i = i + 1
+    }
+    var m = Map[Str, Int].new()
+    m.insert("answer", 42)
+
+    println("trong region: {live()} allocation(s) dang song")
+    let total = sum(particles.len())
+    println("so hat = {total}")
+  }
+
+  println("sau region: {live()} allocation(s) — ca rừng 1001 doi tuong giai phong trong MOT lenh")
+}
+
+fn sum(n: Int) -> Int {
+  n
+}

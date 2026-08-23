@@ -1,0 +1,16 @@
+use "./wc_lib.ab" as wc
+
+fn main() {
+  let args = std.env.args()
+  if args.len() == 0 {
+    println("usage: wordcount <file>")
+    return
+  }
+
+  match std.fs.read_file(args.get(0).unwrap()) {
+    Ok(text) => {
+      println("{wc.count_lines(text)} lines, {wc.count_words(text)} words, {text.len()} chars")
+    }
+    Err(why) => println("error: {why}")
+  }
+}

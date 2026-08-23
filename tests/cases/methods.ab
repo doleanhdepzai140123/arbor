@@ -1,0 +1,28 @@
+struct Counter {
+  count: Int
+  step: Int
+}
+
+fn Counter.bump(self: inout Counter) -> Int {
+  self.count += self.step
+  self.count
+}
+
+fn Point.sum(self: Point) -> Int {
+  self.x + self.y
+}
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+fn main() {
+  var c = Counter { count: 0, step: 5 }
+  c.bump()
+  let after1 = c.bump()
+  println("count = {after1}")
+
+  let p = Point { x: 3, y: 4 }
+  println("sum = {p.sum()}")
+}

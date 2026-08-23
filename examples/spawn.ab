@@ -1,0 +1,36 @@
+// spawn.ab — song song có cấu trúc:
+// task KHÔNG BAO GIỜ sống lâu hơn khối chứa nó. Join tự động, không task mồ côi,
+// không data race: bắt được biến Copy thì sao chép, không Copy thì MOVE (bị tiêu thụ).
+
+fn work(id: Int) -> Int {
+  var acc = 0
+  var i = 0
+  while i < 100 {
+    acc = acc + id * i
+    i = i + 1
+  }
+  acc
+}
+
+fn main() {
+  let base = 10
+
+  spawn {
+    println("[task A] base = {base} (Copy: duoc ban sao rieng)")
+    println("[task A] ket qua = {work(1)}")
+  }
+
+  spawn {
+    println("[task B] ket qua = {work(2)}")
+  }
+
+  // Task join NGAY TRƯỚC khi khối này kết thúc — đảm bảo bởi cấu trúc.
+  println("main tiep tuc...")
+}
+
+// Thử bỏ comment để thấy compiler chặn move hai lần:
+// fn broken() {
+//   var data: [Int] = [1, 2, 3]
+//   spawn { println("{data.len()}") }
+//   spawn { println("{data.len()}") }   // LỖI: capture of moved value `data`
+// }

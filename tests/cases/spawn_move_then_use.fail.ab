@@ -1,0 +1,7 @@
+fn main() {
+  var data: [Int] = [1, 2, 3]
+  spawn {
+    println("{data.len()}")
+  }
+  println("{data.len()}")
+}

@@ -1,0 +1,16 @@
+fn work(id: Int) -> Int {
+  var acc = 0
+  var i = 0
+  while i < 100 {
+    acc = acc + id * i
+    i = i + 1
+  }
+  acc
+}
+
+fn main() {
+  let shared = 99
+  spawn { println("A sees {shared} computed {work(10)}") }
+  spawn { println("B sees {shared} computed {work(20)}") }
+  println("main body done")
+}

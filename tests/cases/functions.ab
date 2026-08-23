@@ -1,0 +1,27 @@
+fn fib(n: Int) -> Int {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn twice(f: fn(Int) -> Int, x: Int) -> Int {
+  f(f(x))
+}
+
+fn make_adder(k: Int) -> fn(Int) -> Int {
+  fn(n: Int) -> Int {
+    n + k
+  }
+}
+
+fn swap_pair[T](p: (T, T)) -> (T, T) {
+  let (a, b) = p
+  (b, a)
+}
+
+fn main() {
+  println(fib(10))
+  println(twice(fn(x: Int) -> Int { x * 3 }, 7))
+  let add5 = make_adder(5)
+  println(add5(37))
+  let p = swap_pair((1, 2))
+  println("{p.0} {p.1}")
+}

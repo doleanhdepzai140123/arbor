@@ -1,0 +1,27 @@
+struct Item {
+  name: Str
+}
+
+fn main() {
+  var t = Table[Item].new()
+  let h1 = t.insert(Item { name: "one" })
+  let h2 = t.insert(Item { name: "two" })
+  println(t.len())
+
+  match t.get(h1) {
+    Some(it) => println(it.name)
+    None => println("missing")
+  }
+
+  let old = t.remove(h1)
+  match old {
+    Some(it) => println("removed {it.name}")
+    None => println("?")
+  }
+  println(t.alive(h1))
+  println(t.alive(h2))
+  match t.get(h1) {
+    Some(it) => println("BUG {it.name}")
+    None => println("stale handle is safe")
+  }
+}

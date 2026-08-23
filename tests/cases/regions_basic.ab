@@ -1,0 +1,20 @@
+use std.mem.live
+
+struct Particle {
+  x: Int
+  y: Int
+}
+
+fn main() {
+  let before = live()
+  region arena {
+    var ps: [Particle] = []
+    var i = 0
+    while i < 50 {
+      ps.push(Particle { x: i, y: i })
+      i = i + 1
+    }
+    println(live() - before)
+  }
+  println(live() - before)
+}

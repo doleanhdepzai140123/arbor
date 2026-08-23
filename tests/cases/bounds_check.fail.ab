@@ -1,0 +1,4 @@
+fn main() {
+  var xs: [Int] = [0, 1, 2]
+  println(xs[7])
+}

@@ -1,0 +1,16 @@
+{
+  "name": "arbor-lang",
+  "version": "0.1.0",
+  "description": "ARBOR — the tree-shaped safe language: fast compile, tiny mental model, structural memory safety",
+  "type": "module",
+  "main": "src/interp.js",
+  "bin": {
+    "arbor": "bin/arbor.js"
+  },
+  "scripts": {
+    "test": "node tests/run_tests.mjs",
+    "bench": "node tests/bench.mjs",
+    "repl": "node bin/arbor.js repl"
+  },
+  "license": "MIT"
+}

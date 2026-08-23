@@ -1,0 +1,39 @@
+// structs_enums.ab — giá trị là CÂY: struct copy khi ra khỏi scope nhỏ,
+// enum + match phải xử lý ĐỦ mọi biến thể, nếu không compiler từ chối chạy.
+
+struct Vec2 {
+  x: Int
+  y: Int
+}
+
+enum Shape {
+  Circle(Int)
+  Rect(Vec2, Vec2)
+  Point
+}
+
+fn area(s: in Shape) -> Int {
+  match s {
+    // Không có nhánh Point => chương trình KHÔNG BIÊN DỊCH được.
+    Circle(r) => 3 * r * r
+    Rect(a, b) => abs_i((b.x - a.x) * (b.y - a.y))
+    Point => 0
+  }
+}
+
+fn abs_i(v: Int) -> Int {
+  if v < 0 { -v } else { v }
+}
+
+fn main() {
+  let p = Vec2 { x: 1, y: 2 }
+  let q = p          // Copy: Vec2 toàn Copy-field
+  println("p = ({p.x}, {p.y}), q = ({q.x}, {q.y}) — ca hai van song")
+
+  let shapes: [Shape] = [Circle(2), Rect(Vec2 { x: 0, y: 0 }, Vec2 { x: 3, y: 4 }), Point]
+  var total = 0
+  for s in shapes {
+    total = total + area(s)
+  }
+  println("tong dien tich = {total}")
+}

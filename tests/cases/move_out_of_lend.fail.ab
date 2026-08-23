@@ -1,0 +1,7 @@
+fn main() {
+  var grid: [[Int]] = [[1], [2]]
+  for row in grid {
+    let owned = row
+    println(owned.len())
+  }
+}

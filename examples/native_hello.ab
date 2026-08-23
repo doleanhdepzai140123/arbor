@@ -1,0 +1,12 @@
+fn fib(n: Int) -> Int {
+  if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+  println("native ARBOR!")
+  var i = 0
+  while i < 10 {
+    println("fib({i}) = {fib(i)}")
+    i = i + 1
+  }
+}

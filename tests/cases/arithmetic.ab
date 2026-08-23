@@ -1,0 +1,13 @@
+fn main() {
+  println(1 + 2 * 3)
+  println((1 + 2) * 3)
+  println(10 / 3)
+  println(10 % 3)
+  println(7.0 / 2.0)
+  println(-5 + 1)
+  let s = "arb" + "or"
+  println(s)
+  println(true and not false)
+  println(1 < 2 and 2 <= 2 and 3 > 2 and 3 >= 3)
+  println(1 == 1)
+}

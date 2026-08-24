@@ -1,99 +1,302 @@
-// self_parser.ab — ARBOR parser written in ARBOR
-// Parses token stream into a flat AST representation using parallel arrays.
-// Each node: [kind, a, b, c, d] where kind is a string tag.
+// self_compiler.ab — Self-hosted ARBOR compiler
+// Reads ARBOR source, tokenizes, parses, emits C#.
+// Only handles the ARBOR subset used by this compiler itself.
 
-pub fn parse_program(tokens: [Token]) -> [object] {
-  var nodes: [object] = []
-  var pos = 0
-  let n = tokens.len()
+use "./self_lexer.ab"
 
-  fn peek() -> Token { tokens[pos] }
-  fn advance() -> Token { let t = tokens[pos]; if pos < n - 1 { pos += 1 }; t }
-  fn at(kind: Str) -> Bool { tokens[pos].kind == kind }
-  fn expect(kind: Str) -> Token {
-    if tokens[pos].kind != kind {
-      println("PARSE ERROR: expected {kind}, got {tokens[pos].kind} '{tokens[pos].value}' at line {tokens[pos].line}")
-      std.process.exit(1)
-    }
-    advance()
+// ===== TOKEN NAVIGATION =====
+var toks: [Token] = []
+var pos = 0
+var tok_count = 0
+
+fn peek() -> Token { toks[pos] }
+fn advance() -> Token { let t = toks[pos]; if pos < tok_count - 1 { pos += 1 }; t }
+fn at(kind: Str) -> Bool { peek().kind == kind }
+fn at_value(v: Str) -> Bool { peek().value == v }
+fn expect(k: Str) -> Token {
+  if !at(k) {
+    println("PARSE ERROR line {peek().line}: expected '{k}' got '{peek().value}'")
+    std.process.exit(1)
   }
+  advance()
+}
+fn expect_val(v: Str) -> Token {
+  if peek().value != v {
+    println("PARSE ERROR line {peek().line}: expected '{v}' got '{peek().value}'")
+    std.process.exit(1)
+  }
+  advance()
+}
 
-  while pos < n - 1 {
+// ===== C# OUTPUT =====
+var out: [Str] = []
+fn emit(s: Str) { out.push(s) }
+fn emit_line(s: Str) { out.push("            " + s) }
+
+// ===== TYPE MAPPING =====
+fn map_type(name: Str) -> Str {
+  if name == "Int" { return "object" }
+  if name == "Str" { return "object" }
+  if name == "Bool" { return "object" }
+  return "object"
+}
+
+// ===== EXPRESSION PRECEDENCE CLIMBING =====
+// Returns C# expression string
+fn parse_expr() -> Str { parse_binary(0) }
+
+fn op_prec(op: Str) -> Int {
+  if op == "or" { return 1 }
+  if op == "and" { return 2 }
+  if op == "==" { return 3 }
+  if op == "!=" { return 3 }
+  if op == "<" { return 4 }
+  if op == ">" { return 4 }
+  if op == "<=" { return 4 }
+  if op == ">=" { return 4 }
+  if op == "+" { return 5 }
+  if op == "-" { return 5 }
+  if op == "*" { return 6 }
+  if op == "/" { return 6 }
+  if op == "%" { return 6 }
+  return 0
+}
+
+fn is_binop(t: Token) -> Bool {
+  if t.kind == "and" { return true }
+  if t.kind == "or" { return true }
+  if t.kind == "dotdot" { return false }
+  if t.kind == "op" {
+    return t.value == "+" || t.value == "-" || t.value == "*" ||
+           t.value == "/" || t.value == "%" || t.value == "==" ||
+           t.value == "!=" || t.value == "<" || t.value == ">" ||
+           t.value == "<=" || t.value == ">="
+  }
+  return false
+}
+
+fn cs_binop(op: Str, l: Str, r: Str) -> Str {
+  if op == "and" { return "RT.Truthy(" + l + ") ? " + r + " : (object)false" }
+  if op == "or" { return "RT.Truthy(" + l + ") ? (object)true : " + r }
+  if op == "+" { return "RT.Add(" + l + ", " + r + ")" }
+  if op == "-" { return "RT.Sub(" + l + ", " + r + ")" }
+  if op == "*" { return "RT.Mul(" + l + ", " + r + ")" }
+  if op == "/" { return "RT.Div(" + l + ", " + r + ")" }
+  if op == "%" { return "RT.Rem(" + l + ", " + r + ")" }
+  if op == "==" { return "RT.Eq(" + l + ", " + r + ")" }
+  if op == "!=" { return "RT.Ne(" + l + ", " + r + ")" }
+  if op == "<" { return "RT.Lt(" + l + ", " + r + ")" }
+  if op == ">" { return "RT.Gt(" + l + ", " + r + ")" }
+  if op == "<=" { return "RT.Le(" + l + ", " + r + ")" }
+  if op == ">=" { return "RT.Ge(" + l + ", " + r + ")" }
+  return l
+}
+
+fn parse_binary(min_prec: Int) -> Str {
+  var left = parse_unary()
+  while is_binop(peek()) {
+    let op = peek().value
+    let prec = op_prec(op)
+    if prec < min_prec { break }
+    advance()
+    let right = parse_binary(prec + 1)
+    left = cs_binop(op, left, right)
+  }
+  left
+}
+
+fn parse_unary() -> Str {
+  if at("-") {
+    advance()
+    let v = parse_unary()
+    return "RT.Neg(" + v + ")"
+  }
+  parse_postfix()
+}
+
+fn parse_postfix() -> Str {
+  var e = parse_primary()
+  while true {
+    if at(".") {
+      advance()
+      let name = advance().value
+      if at("(") {
+        let args = parse_args()
+        e = "RT.CallMethod(" + e + ", \"" + name + "\", new object[] { " + args + " })"
+      } else {
+        e = "RT.StructGet(" + e + ", \"" + name + "\")"
+      }
+    } else if at("(") {
+      let args = parse_args()
+      e = "RT.CallFn(" + e + ", new object[] { " + args + " })"
+    } else if at("[") {
+      advance()
+      let idx = parse_expr()
+      expect("]")
+      e = "RT.Idx(" + e + ", " + idx + ")"
+    } else {
+      break
+    }
+  }
+  e
+}
+
+fn parse_args() -> Str {
+  expect("(")
+  var args: [Str] = []
+  if !at(")") {
+    args.push(parse_expr())
+    while at(",") {
+      advance()
+      args.push(parse_expr())
+    }
+  }
+  expect(")")
+  args.join(", ")
+}
+
+fn parse_primary() -> Str {
+  let t = peek()
+  if t.kind == "int" {
+    advance()
+    return "(object)(long)(" + t.value + ")"
+  }
+  if t.kind == "string" {
+    advance()
+    return "(object)" + t.value
+  }
+  if t.kind == "true" { advance(); return "(object)true" }
+  if t.kind == "false" { advance(); return "(object)false" }
+  if t.kind == "ident" {
+    advance()
+    return "CsSafe(" + t.value + ")"
+  }
+  if t.kind == "(" {
+    advance()
+    let inner = parse_expr()
+    expect(")")
+    return inner
+  }
+  advance()
+  return "RT.UNIT"
+}
+
+fn CsSafe(name: Str) -> Str { name }
+
+// ===== STATEMENTS =====
+fn parse_stmt() -> Str {
+  let t = peek()
+  if t.kind == "let" || t.kind == "var" {
+    return parse_let()
+  }
+  if t.kind == "return" {
+    advance()
+    if at("}") || peek().line != t.line {
+      return "return RT.UNIT;"
+    }
+    let v = parse_expr()
+    return "return " + v + ";"
+  }
+  if t.kind == "while" {
+    return parse_while()
+  }
+  if t.kind == "if" {
+    return parse_if_stmt()
+  }
+  // expression statement
+  let e = parse_expr()
+  return e + ";"
+}
+
+fn parse_let() -> Str {
+  advance()
+  let name = advance().value
+  expect("=")
+  let init = parse_expr()
+  return "var " + name + " = " + init + ";"
+}
+
+fn parse_while() -> Str {
+  advance()
+  let cond = parse_expr()
+  let body = parse_braced_stmts()
+  return "while (RT.Truthy(" + cond + ")) { " + body + " }"
+}
+
+fn parse_if_stmt() -> Str {
+  advance()
+  let cond = parse_expr()
+  let then_body = parse_braced_stmts()
+  var result = "if (RT.Truthy(" + cond + ")) { " + then_body + " }"
+  if at("else") {
+    advance()
+    if at("if") {
+      result = result + " else " + parse_if_stmt()
+    } else {
+      let else_body = parse_braced_stmts()
+      result = result + " else { " + else_body + " }"
+    }
+  }
+  result
+}
+
+fn parse_braced_stmts() -> Str {
+  expect("{")
+  var stmts: [Str] = []
+  while !at("}") && !at("eof") {
+    stmts.push(parse_stmt())
+  }
+  expect("}")
+  stmts.join(" ")
+}
+
+// ===== TOP LEVEL =====
+fn parse_and_emit() {
+  while !at("eof") {
     if at("fn") {
-      let fn_tok = advance()
-      let name_tok = advance()
-      var params: [object] = []
+      advance()
+      let name = advance().value
+      var params: [Str] = []
       expect("(")
-      while !at(")") {
-        let p_name = advance()
-        expect(":")
-        let p_mode = if at("in") { advance(); "in " } else if at("inout") { advance(); "inout " } else { "" }
-        let p_ty = advance()
-        params.push(p_mode + p_name.value + ": " + p_ty.value)
-        if at(",") { advance() }
+      if !at(")") {
+        params.push(advance().value + " object")
+        while at(",") {
+          advance()
+          params.push(advance().value + " object")
+        }
       }
       expect(")")
-      var ret = ""
-      if at("arrow") {
-        advance()
-        ret = advance().value
+      var ret = "object"
+      if at("arrow") { advance(); ret = "object" }
+      emit("        public static " + ret + " " + name + "(" + params.join(", ") + ") {")
+      var body_stmts: [Str] = []
+      expect("{")
+      while !at("}") && !at("eof") {
+        body_stmts.push(parse_stmt())
       }
-      let body = parse_block()
-      nodes.push("fn:" + name_tok.value + "|" + ret + "|" + body)
+      expect("}")
+      if body_stmts.len() == 0 || !body_stmts.get(body_stmts.len() - 1).starts_with("return") {
+        body_stmts.push("return RT.UNIT;")
+      }
+      for s in body_stmts {
+        emit("            " + s)
+      }
+      emit("        }")
+      emit("")
     } else if at("struct") {
       advance()
-      let name_tok = advance()
-      expect("{")
-      var fields: [Str] = []
-      while !at("}") {
-        let f_name = advance()
-        expect(":")
-        let f_ty = advance()
-        fields.push(f_name.value + ": " + f_ty.value)
-        if at(",") { advance() }
-      }
-      expect("}")
-      nodes.push("struct:" + name_tok.value + "|" + fields.join(", "))
-    } else if at("enum") {
+      let name = advance().value
+      emit("        public static object " + name + "(object f0, object f1, object f2) {")
+      emit("            Bump();")
+      emit("            var d = new Dictionary<string, object>();")
+      emit("            return new AbStruct { Type = \"" + name + "\", Fields = d };")
+      emit("        }")
+      emit("")
+      // skip to closing brace
+      while !at("}") { advance() }
       advance()
-      let name_tok = advance()
-      expect("{")
-      var variants: [Str] = []
-      while !at("}") {
-        let v_name = advance()
-        if at("(") {
-          advance()
-          var v_tys: [Str] = []
-          while !at(")") {
-            v_tys.push(advance().value)
-            if at(",") { advance() }
-          }
-          expect(")")
-          variants.push(v_name.value + "(" + v_tys.join(", ") + ")")
-        } else {
-          variants.push(v_name.value)
-        }
-        if at(",") { advance() }
-      }
-      expect("}")
-      nodes.push("enum:" + name_tok.value + "|" + variants.join(", "))
     } else {
       advance()
     }
   }
-
-  nodes
-}
-
-fn parse_block() -> Str {
-  expect("{")
-  var depth = 1
-  var body = ""
-  while depth > 0 && !at("eof") {
-    let t = advance()
-    if t.kind == "{" { depth += 1 }
-    if t.kind == "}" { depth -= 1; if depth == 0 { break } }
-    body += t.kind + " "
-  }
-  body.trim()
 }

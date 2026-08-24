@@ -1,0 +1,8 @@
+use "./transpiler.ab"
+
+fn main() {
+  let source = std.fs.read_file("input.ab").unwrap()
+  let csharp = transpile(source)
+  std.fs.write_file("output.cs", csharp).unwrap()
+  println("transpiled OK")
+}

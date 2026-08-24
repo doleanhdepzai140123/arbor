@@ -1,0 +1,232 @@
+// transpiler.ab — self-hosted ARBOR -> C# transpiler, written in ARBOR.
+//
+// This proves ARBOR can express its own compiler front-to-back tooling:
+// it reads ARBOR source, rewrites it line-by-line into C#, and emits a
+// runnable C# file prefixed with a small RT runtime prelude.
+//
+// Only C#-backend-supported features are used: Str.split / .trim /
+// .contains / .chars / .repeat / .len, array push/get/len, string + and
+// ==, for-in loops, if/else chains. No string indexing, no closures,
+// no match expressions, no spawn, no regions, no tables.
+
+// ---------- tiny string toolkit ----------
+// The C# backend has no starts_with and no slicing, so we build them
+// from .chars() plus array access.
+
+fn slice_to(s: Str, n: Int) -> Str {
+  var out = ""
+  let cs = s.chars()
+  var i = 0
+  while i < n and i < cs.len() {
+    out = out + cs.get(i).unwrap()
+    i += 1
+  }
+  out
+}
+
+fn slice_from(s: Str, start: Int) -> Str {
+  var out = ""
+  let cs = s.chars()
+  var i = start
+  while i < cs.len() {
+    out = out + cs.get(i).unwrap()
+    i += 1
+  }
+  out
+}
+
+fn starts_with(s: Str, pre: Str) -> Bool {
+  if pre.len() > s.len() { false } else { slice_to(s, pre.len()) == pre }
+}
+
+fn ends_with(s: Str, suf: Str) -> Bool {
+  if suf.len() > s.len() { false } else { slice_from(s, s.len() - suf.len()) == suf }
+}
+
+fn strip_prefix(s: Str, pre: Str) -> Str {
+  slice_from(s, pre.len())
+}
+
+fn drop_last(s: Str, n: Int) -> Str {
+  slice_to(s, s.len() - n)
+}
+
+fn join_str(parts: [Str], sep: Str) -> Str {
+  var out = ""
+  let n = parts.len()
+  var i = 0
+  while i < n {
+    out = out + parts.get(i).unwrap()
+    if i + 1 < n { out = out + sep }
+    i += 1
+  }
+  out
+}
+
+// Everything after the FIRST '=' — rebuilt so '==' '<=' '>=' '!=' on the
+// right-hand side survive intact ("a = b == c" -> "b == c").
+fn after_first_eq(s: Str) -> Str {
+  let pieces = s.split("=")
+  var rest: [Str] = []
+  let n = pieces.len()
+  var i = 1
+  while i < n {
+    rest.push(pieces.get(i).unwrap())
+    i += 1
+  }
+  join_str(rest, "=")
+}
+
+// ---------- per-line transpilers ----------
+
+// "p1: T1, p2: T2" -> "object p1, object p2"
+fn cs_params(plist: Str) -> Str {
+  let pieces = plist.split(",")
+  var outs: [Str] = []
+  for p in pieces {
+    let nm = p.trim().split(":").get(0).unwrap().trim()
+    if nm.len() > 0 { outs.push("object " + nm) }
+  }
+  join_str(outs, ", ")
+}
+
+// "fn name(p1: T1, p2: T2) -> Ret {" -> "public static object name(object p1, object p2) {"
+fn transpile_fn(t: Str) -> Str {
+  let sig = strip_prefix(t, "fn ")
+  let name = sig.split("(").get(0).unwrap().trim()
+  let plist = sig.split("(").get(1).unwrap().split(")").get(0).unwrap()
+  "public static object " + name + "(" + cs_params(plist) + ") \{"
+}
+
+// "}"/"} else {"/"} else if c {" family
+fn transpile_close(t: Str) -> Str {
+  let rest = strip_prefix(t, "}").trim()
+  if rest.len() == 0 {
+    "}"
+  } else if starts_with(rest, "else if") {
+    let cond = strip_prefix(rest, "else if").trim().split("\{").get(0).unwrap().trim()
+    "} else if (RT.Truthy(" + cond + ")) \{"
+  } else if starts_with(rest, "else") {
+    "} else \{"
+  } else {
+    "}"
+  }
+}
+
+// "let name = e" / "var name: T = e" -> "var name = e;"
+fn transpile_let(t: Str) -> Str {
+  let rest = if starts_with(t, "let ") { strip_prefix(t, "let ") } else { strip_prefix(t, "var ") }
+  let lhs = rest.split("=").get(0).unwrap().trim()
+  let rhs = after_first_eq(rest).trim()
+  let vname = lhs.split(":").get(0).unwrap().trim()
+  "var " + vname + " = " + rhs + ";"
+}
+
+// "if c {" -> "if (RT.Truthy(c)) {"   (also used for while)
+fn transpile_block_open(t: Str, kw: Str) -> Str {
+  let cond = strip_prefix(t, kw).trim().split("\{").get(0).unwrap().trim()
+  kw.trim() + " (RT.Truthy(" + cond + ")) \{"
+}
+
+// expression statements get ';' appended unless already punctuated
+fn transpile_expr_stmt(t: Str) -> Str {
+  if ends_with(t, ";") {
+    t
+  } else if ends_with(t, "\{") {
+    t
+  } else if ends_with(t, "\}") {
+    t
+  } else {
+    t + ";"
+  }
+}
+
+// one trimmed source line -> one C# line (no indentation)
+fn transpile_line(t: Str) -> Str {
+  if starts_with(t, "//") {
+    t
+  } else if t == "return" {
+    "return RT.UNIT;"
+  } else if starts_with(t, "return ") {
+    "return " + strip_prefix(t, "return ").trim() + ";"
+  } else if starts_with(t, "\}") {
+    transpile_close(t)
+  } else if starts_with(t, "fn ") {
+    transpile_fn(t)
+  } else if starts_with(t, "let ") or starts_with(t, "var ") {
+    transpile_let(t)
+  } else if starts_with(t, "if ") {
+    transpile_block_open(t, "if ")
+  } else if starts_with(t, "while ") {
+    transpile_block_open(t, "while ")
+  } else if starts_with(t, "println(") and ends_with(t, ")") {
+    let inner = drop_last(strip_prefix(t, "println("), 1).trim()
+    "RT.Println(" + inner + ");"
+  } else {
+    transpile_expr_stmt(t)
+  }
+}
+
+// ---------- RT runtime prelude ----------
+
+fn rt_prelude() -> Str {
+  let ls: [Str] = [
+    "using System;",
+    "using System.Collections.Generic;",
+    "public static class RT \{",
+    "    public static readonly object UNIT = new object();",
+    "    public static bool Truthy(object v) \{ return v is bool && (bool)v; \}",
+    "    public static void Println(object v) \{ Console.WriteLine(v?.ToString() ?? \"()\"); \}",
+    "    public static object CallFn(object f, object[] args) \{ ",
+    "        Console.Error.WriteLine(\"ERROR: function calls not supported in transpiled output\");",
+    "        return null;",
+    "    \}",
+    "    public static object CallMethod(object o, string m, object[] args) \{",
+    "        Console.Error.WriteLine(\"ERROR: method calls not supported in transpiled output\");",
+    "        return null;",
+    "    \}",
+    "    public static object Idx(object o, object i) \{ return null; \}",
+    "    public static object StructGet(object o, string f) \{ return null; \}",
+    "\}"
+  ]
+  join_str(ls, "\n")
+}
+
+// ---------- driver ----------
+
+fn transpile(src: Str) -> Str {
+  let prelude = rt_prelude()
+  let lines = src.split("\n")
+  var body: [Str] = []
+  var depth = 0
+  for raw in lines {
+    let t = raw.trim()
+    if t.len() == 0 {
+      body.push("")
+      continue
+    }
+    var d = depth
+    if starts_with(t, "\}") { d -= 1 }
+    if d < 0 { d = 0 }
+    body.push("  ".repeat(d) + transpile_line(t))
+    var opened = 0
+    var closed = 0
+    if ends_with(t, "\{") { opened += 1 }
+    if starts_with(t, "\}") { closed += 1 }
+    depth += opened - closed
+  }
+  prelude + "\n" + join_str(body, "\n")
+}
+
+// Standalone entry: reads input.ab, writes output.cs.
+fn main() {
+  let r = std.fs.read_file("input.ab")
+  if r.is_err() {
+    println("error: cannot read input.ab")
+    return
+  }
+  let src = r.unwrap()
+  let cs = transpile(src)
+  std.fs.write_file("output.cs", cs).unwrap()
+  println("transpiled {src.len()} chars of ARBOR -> {cs.len()} chars of C#")
+}

@@ -1,0 +1,169 @@
+// self_lexer.ab — ARBOR lexer written in ARBOR
+// Tokenizes ARBOR source into a flat token array.
+
+struct Token {
+  kind: Str
+  value: Str
+  line: Int
+}
+
+fn lex(src: Str) -> [Token] {
+  var tokens: [Token] = []
+  var i = 0
+  var line = 1
+  let n = src.len()
+
+  while i < n {
+    let c = src[i]
+
+    if c == "\n" {
+      line += 1
+      i += 1
+    } else if c == " " or c == "\t" or c == "\r" {
+      i += 1
+    } else if c == "/" and i + 1 < n and src[i + 1] == "/" {
+      while i < n and src[i] != "\n" { i += 1 }
+    } else if c == "/" and i + 1 < n and src[i + 1] == "*" {
+      i += 2
+      while i + 1 < n and not (src[i] == "*" and src[i + 1] == "/") {
+        if src[i] == "\n" { line += 1 }
+        i += 1
+      }
+      i += 2
+    } else if c == "\"" {
+      let start_line = line
+      i += 1
+      var str_val = "\""
+      while i < n and src[i] != "\"" {
+        if src[i] == "\\" {
+          i += 1
+          if i < n {
+            let esc = src[i]
+            if esc == "n" { str_val += "\\n" }
+            else if esc == "t" { str_val += "\\t" }
+            else if esc == "\"" { str_val += "\\\"" }
+            else if esc == "\\" { str_val += "\\\\" }
+            else { str_val += esc }
+            i += 1
+          }
+        } else if src[i] == "\n" {
+          line += 1
+          str_val += src[i]
+          i += 1
+        } else {
+          str_val += src[i]
+          i += 1
+        }
+      }
+      i += 1
+      str_val += "\""
+      tokens.push(Token { kind: "string", value: str_val, line: start_line })
+    } else if is_digit(c) {
+      var num = ""
+      while i < n and is_digit(src[i]) {
+        num += src[i]
+        i += 1
+      }
+      if i < n and src[i] == "." and i + 1 < n and is_digit(src[i + 1]) {
+        num += "."
+        i += 1
+        while i < n and is_digit(src[i]) {
+          num += src[i]
+          i += 1
+        }
+        tokens.push(Token { kind: "float", value: num, line: line })
+      } else {
+        tokens.push(Token { kind: "int", value: num, line: line })
+      }
+    } else if is_ident_start(c) {
+      var word = ""
+      while i < n and is_ident_char(src[i]) {
+        word += src[i]
+        i += 1
+      }
+      let kind = is_keyword(word)
+      tokens.push(Token { kind: kind, value: word, line: line })
+    } else {
+      let two = if i + 1 < n { src[i] + src[i + 1] } else { src[i] }
+      if two == "->" {
+        tokens.push(Token { kind: "arrow", value: "->", line: line })
+        i += 2
+      } else if two == "=>" {
+        tokens.push(Token { kind: "fatarrow", value: "=>", line: line })
+        i += 2
+      } else if two == "==" {
+        tokens.push(Token { kind: "op", value: "==", line: line })
+        i += 2
+      } else if two == "!=" {
+        tokens.push(Token { kind: "op", value: "!=", line: line })
+        i += 2
+      } else if two == "<=" {
+        tokens.push(Token { kind: "op", value: "<=", line: line })
+        i += 2
+      } else if two == ">=" {
+        tokens.push(Token { kind: "op", value: ">=", line: line })
+        i += 2
+      } else if two == "+=" {
+        tokens.push(Token { kind: "opassign", value: "+=", line: line })
+        i += 2
+      } else if two == "-=" {
+        tokens.push(Token { kind: "opassign", value: "-=", line: line })
+        i += 2
+      } else if two == ".." {
+        tokens.push(Token { kind: "dotdot", value: "..", line: line })
+        i += 2
+      } else if c == "{" or c == "}" {
+        tokens.push(Token { kind: c, value: c, line: line })
+        i += 1
+      } else if "(),:;.?=<>+-*/%".contains(c) {
+        tokens.push(Token { kind: c, value: c, line: line })
+        i += 1
+      } else {
+        i += 1
+      }
+    }
+  }
+
+  tokens.push(Token { kind: "eof", value: "", line: line })
+  tokens
+}
+
+fn is_digit(c: Str) -> Bool {
+  c >= "0" and c <= "9"
+}
+
+fn is_ident_start(c: Str) -> Bool {
+  (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+}
+
+fn is_ident_char(c: Str) -> Bool {
+  is_ident_start(c) or is_digit(c)
+}
+
+fn is_keyword(word: Str) -> Str {
+  if word == "fn" { "fn" }
+  else if word == "let" { "let" }
+  else if word == "var" { "var" }
+  else if word == "if" { "if" }
+  else if word == "else" { "else" }
+  else if word == "while" { "while" }
+  else if word == "for" { "for" }
+  else if word == "in" { "in" }
+  else if word == "match" { "match" }
+  else if word == "return" { "return" }
+  else if word == "break" { "break" }
+  else if word == "continue" { "continue" }
+  else if word == "region" { "region" }
+  else if word == "spawn" { "spawn" }
+  else if word == "use" { "use" }
+  else if word == "struct" { "struct" }
+  else if word == "enum" { "enum" }
+  else if word == "const" { "const" }
+  else if word == "true" { "true" }
+  else if word == "false" { "false" }
+  else if word == "and" { "and" }
+  else if word == "or" { "or" }
+  else if word == "not" { "not" }
+  else if word == "inout" { "inout" }
+  else { "ident" }
+}

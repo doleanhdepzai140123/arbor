@@ -32,21 +32,17 @@ export function loadProgram(entryPath) {
       }
       if (d.k === 'use') continue; // std imports are re-emitted untouched below
       if (d.k === 'fn' && !d.name.includes('.')) {
-        const mangled = `${safe}__${d.name}`;
-        members.set(d.name, mangled);
-        decls.push({ ...d, name: mangled });
+        members.set(d.name, d.name);
+        decls.push(d);
         continue;
       }
       if (d.k === 'const') {
-        const mangled = `${safe}__${d.name}`;
-        members.set(d.name, mangled);
-        decls.push({ ...d, name: mangled });
+        members.set(d.name, d.name);
+        decls.push(d);
         continue;
       }
-      // structs/enums/methods: not exported in v0.2 (documented limitation)
-      throw new Error(
-        `module '${stem}': only top-level functions and constants are exported ` +
-        `(found '${d.k} ${d.name ?? ''}') — declare types in the entry file`);
+      // structs/enums/methods pass through unchanged
+      decls.push(d);
     }
     modules.set(absPath, { name: safe, decls, members });
     order.push(absPath);

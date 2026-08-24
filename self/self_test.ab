@@ -1,0 +1,10 @@
+use "./self_lexer.ab"
+
+fn main() {
+  let src = "fn add(a: Int, b: Int) -> Int \{ a + b \}"
+  let tokens = self_lexer.lex(src)
+  println("tokenized {tokens.len()} tokens from {src.len()} chars")
+  for t in tokens {
+    println("  [{t.line}] {t.kind} = \"{t.value}\"")
+  }
+}

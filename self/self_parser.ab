@@ -1,0 +1,99 @@
+// self_parser.ab — ARBOR parser written in ARBOR
+// Parses token stream into a flat AST representation using parallel arrays.
+// Each node: [kind, a, b, c, d] where kind is a string tag.
+
+pub fn parse_program(tokens: [Token]) -> [object] {
+  var nodes: [object] = []
+  var pos = 0
+  let n = tokens.len()
+
+  fn peek() -> Token { tokens[pos] }
+  fn advance() -> Token { let t = tokens[pos]; if pos < n - 1 { pos += 1 }; t }
+  fn at(kind: Str) -> Bool { tokens[pos].kind == kind }
+  fn expect(kind: Str) -> Token {
+    if tokens[pos].kind != kind {
+      println("PARSE ERROR: expected {kind}, got {tokens[pos].kind} '{tokens[pos].value}' at line {tokens[pos].line}")
+      std.process.exit(1)
+    }
+    advance()
+  }
+
+  while pos < n - 1 {
+    if at("fn") {
+      let fn_tok = advance()
+      let name_tok = advance()
+      var params: [object] = []
+      expect("(")
+      while !at(")") {
+        let p_name = advance()
+        expect(":")
+        let p_mode = if at("in") { advance(); "in " } else if at("inout") { advance(); "inout " } else { "" }
+        let p_ty = advance()
+        params.push(p_mode + p_name.value + ": " + p_ty.value)
+        if at(",") { advance() }
+      }
+      expect(")")
+      var ret = ""
+      if at("arrow") {
+        advance()
+        ret = advance().value
+      }
+      let body = parse_block()
+      nodes.push("fn:" + name_tok.value + "|" + ret + "|" + body)
+    } else if at("struct") {
+      advance()
+      let name_tok = advance()
+      expect("{")
+      var fields: [Str] = []
+      while !at("}") {
+        let f_name = advance()
+        expect(":")
+        let f_ty = advance()
+        fields.push(f_name.value + ": " + f_ty.value)
+        if at(",") { advance() }
+      }
+      expect("}")
+      nodes.push("struct:" + name_tok.value + "|" + fields.join(", "))
+    } else if at("enum") {
+      advance()
+      let name_tok = advance()
+      expect("{")
+      var variants: [Str] = []
+      while !at("}") {
+        let v_name = advance()
+        if at("(") {
+          advance()
+          var v_tys: [Str] = []
+          while !at(")") {
+            v_tys.push(advance().value)
+            if at(",") { advance() }
+          }
+          expect(")")
+          variants.push(v_name.value + "(" + v_tys.join(", ") + ")")
+        } else {
+          variants.push(v_name.value)
+        }
+        if at(",") { advance() }
+      }
+      expect("}")
+      nodes.push("enum:" + name_tok.value + "|" + variants.join(", "))
+    } else {
+      advance()
+    }
+  }
+
+  nodes
+}
+
+fn parse_block() -> Str {
+  expect("{")
+  var depth = 1
+  var body = ""
+  while depth > 0 && !at("eof") {
+    let t = advance()
+    if t.kind == "{" { depth += 1 }
+    if t.kind == "}" { depth -= 1; if depth == 0 { break } }
+    body += t.kind + " "
+  }
+  body.trim()
+}

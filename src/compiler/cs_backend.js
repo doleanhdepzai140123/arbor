@@ -364,6 +364,11 @@ class CsGen {
       case 'method': return this.genMethod(e);
       case 'index': {
         const o = this.genExpr(e.obj), i = this.genExpr(e.idx);
+        const objTy = this.inferTyE(e.obj);
+        if (objTy === 'string') {
+          this.lastTy = 'string';
+          return `RT.StrIdx(${o}, ${i})`;
+        }
         this.lastTy = null;
         return `RT.ArrGetOpt(${o}, ${i})`;
       }
@@ -490,7 +495,15 @@ class CsGen {
     }
     if ((lt === 'string' && rt === 'string') && (e.op === '==' || e.op === '!=')) {
       this.lastTy = 'bool';
-      return e.op === '==' ? `((${l}) == (${r}))` : `((${l}) != (${r}))`;
+      return e.op === '==' ? `string.Equals(${l}, ${r})` : `!string.Equals(${l}, ${r})`;
+    }
+    if ((lt === 'string' && rt === 'string') && (e.op === '<' || e.op === '<=' || e.op === '>' || e.op === '>=')) {
+      this.lastTy = 'bool';
+      const cmp = `string.Compare(${l}, ${r})`;
+      if (e.op === '<') return `((${cmp}) < 0)`;
+      if (e.op === '<=') return `((${cmp}) <= 0)`;
+      if (e.op === '>') return `((${cmp}) > 0)`;
+      return `((${cmp}) >= 0)`;
     }
     const op = { '==': 'Eq', '!=': 'Ne', '<': 'Lt', '<=': 'Le', '>': 'Gt', '>=': 'Ge', '+': 'Add', '-': 'Sub', '*': 'Mul', '/': 'Div', '%': 'Rem', '..': 'RangeOf' }[e.op];
     this.lastTy = null;
@@ -1358,6 +1371,11 @@ public static class RT {
     public static double AsDoubleE(object v) { return v is double ? (double)v : System.Convert.ToDouble(v); }
     public static long FloatToIntRaw(double d) { return (long)Math.Truncate(d); }
     public static object RangeOf(object a, object b) { Trap("R0016", "range needs integers"); return UNIT; }
+    public static string StrIdx(object s, object i) {
+        var str = AsStr(s); var idx = (int)(long)i;
+        if (idx < 0 || idx >= str.Length) Trap("R0002", "string index out of bounds");
+        return str.Substring(idx, 1);
+    }
     public static object RangeL(long s, long e) { Bump(); return new AbRange { Start = s, End = e }; }
 
     // Dynamic fallbacks: keep typed fast-paths compilable even when the

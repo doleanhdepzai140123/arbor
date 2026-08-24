@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.3.0 — Self-hosting milestone
+
+### ARBOR compiles ARBOR
+- **`self/self_lexer.ab`** — a full ARBOR lexer written in ARBOR. Its token
+  stream is verified token-for-token against the reference lexer
+  (`tests/self_hosted.mjs`) in two modes: executed by the reference VM *and*
+  compiled to a standalone native .exe through the C# back end. 157/157
+  tokens match in all three configurations.
+- **`self/transpiler.ab`** — an ARBOR→C# transpiler written in ARBOR,
+  completing the bootstrap loop end-to-end: ARBOR source is rewritten into C#
+  by a program written in ARBOR itself, then compiled with `csc.exe` into a
+  runnable executable (`input.ab` → `self/test_transpile.ab` → `output.cs`
+  → `.exe`).
+- **`self/self_parser.ab`** — recursive-descent parser + precedence-climbing
+  expression parser written in ARBOR, emitting C# directly.
+- **`self/self_analysis.ab`** — ARBOR analyzing its own compiler component's
+  source (token statistics over `self_lexer.ab`).
+- `npm test` now chains conformance (25), native parity (12) and self-hosting
+  parity suites.
+
+### Language fixes surfaced by self-hosting
+- Fixed the reference interpreter rejecting ordered string comparison
+  (`"a" < "b"`): the checker and the C# back end already supported
+  lexicographic `Str` ordering, but the VM raised R0016. The self-hosted
+  lexer's character classification was the first real-world program to need
+  it — exactly what self-hosting is for.
+
 ## v0.2.0
 
 ### Multi-file modules & methods

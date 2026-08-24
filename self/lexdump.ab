@@ -1,0 +1,25 @@
+// lexdump.ab — dumps tokens of a file as "kind<TAB>value<TAB>line" rows.
+// Used by tests/self_hosted.mjs to prove the self-hosted lexer agrees
+// with the reference lexer token-for-token.
+
+use "./self_lexer.ab"
+
+fn main() {
+  let argv = std.env.args()
+  if argv.len() < 1 {
+    println("usage: lexdump <file.ab>")
+    return
+  }
+  let path = argv.get(0).unwrap()
+  let r = std.fs.read_file(path)
+  if r.is_err() {
+    println("error: cannot read {path}")
+    return
+  }
+  let src = r.unwrap()
+  let tokens = self_lexer.lex(src)
+  for t in tokens {
+    if t.kind == "eof" { continue }
+    println("{t.kind} {t.value} {t.line}")
+  }
+}

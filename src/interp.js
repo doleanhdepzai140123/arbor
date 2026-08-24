@@ -692,10 +692,21 @@ export class Interpreter {
         return mkF(unF(l) % unF(r));
       case '==': return valuesEqual(l, r);
       case '!=': return !valuesEqual(l, r);
-      case '<': checkNum(l, e.span); checkNum(r, e.span); return unF(l) < unF(r);
-      case '<=': checkNum(l, e.span); checkNum(r, e.span); return unF(l) <= unF(r);
-      case '>': checkNum(l, e.span); checkNum(r, e.span); return unF(l) > unF(r);
-      case '>=': checkNum(l, e.span); checkNum(r, e.span); return unF(l) >= unF(r);
+      case '<':
+      case '<=':
+      case '>':
+      case '>=':
+        if (typeof l === 'string' && typeof r === 'string') {
+          if (op === '<') return l < r;
+          if (op === '<=') return l <= r;
+          if (op === '>') return l > r;
+          return l >= r;
+        }
+        checkNum(l, e.span); checkNum(r, e.span);
+        if (op === '<') return unF(l) < unF(r);
+        if (op === '<=') return unF(l) <= unF(r);
+        if (op === '>') return unF(l) > unF(r);
+        return unF(l) >= unF(r);
       default:
         throw new ArborError({ code: 'R0020', message: `unknown operator ${op}`, span: e.span });
     }

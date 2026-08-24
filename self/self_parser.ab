@@ -1,51 +1,147 @@
-// self_compiler.ab — Self-hosted ARBOR compiler
-// Reads ARBOR source, tokenizes, parses, emits C#.
-// Only handles the ARBOR subset used by this compiler itself.
+// self_parser.ab — ARBOR parser written in ARBOR
+// Recursive descent parser that directly emits C# code.
+// Uses the Parser struct to track token position.
 
-use "./self_lexer.ab"
+struct Parser {
+  toks: [Token]
+  pos: Int
+  out: [Str]
+  indent: Int
+}
 
-// ===== TOKEN NAVIGATION =====
-var toks: [Token] = []
-var pos = 0
-var tok_count = 0
+fn P_new(toks: [Token]) -> Parser {
+  Parser { toks: toks, pos: 0, out: [], indent: 2 }
+}
 
-fn peek() -> Token { toks[pos] }
-fn advance() -> Token { let t = toks[pos]; if pos < tok_count - 1 { pos += 1 }; t }
-fn at(kind: Str) -> Bool { peek().kind == kind }
-fn at_value(v: Str) -> Bool { peek().value == v }
-fn expect(k: Str) -> Token {
-  if !at(k) {
-    println("PARSE ERROR line {peek().line}: expected '{k}' got '{peek().value}'")
+fn P_peek(p: Parser) -> Token { p.toks[p.pos] }
+fn P_kind(p: Parser) -> Str { p.toks[p.pos].kind }
+fn P_val(p: Parser) -> Str { p.toks[p.pos].value }
+
+fn P_advance(p: inout Parser) -> Token {
+  let t = p.toks[p.pos]
+  if p.pos < p.toks.len() - 1 { p.pos += 1 }
+  t
+}
+
+fn P_at(p: Parser, kind: Str) -> Bool { p.toks[p.pos].kind == kind }
+fn P_expect(p: inout Parser, kind: Str) -> Token {
+  if not P_at(p, kind) {
+    println("PARSE ERROR: expected '{kind}' got '{P_val(p)}' at line {P_peek(p).line}")
     std.process.exit(1)
   }
-  advance()
+  P_advance(p)
 }
-fn expect_val(v: Str) -> Token {
-  if peek().value != v {
-    println("PARSE ERROR line {peek().line}: expected '{v}' got '{peek().value}'")
-    std.process.exit(1)
+
+fn P_emit(p: inout Parser, s: Str) {
+  var pad = ""
+  var i = 0
+  while i < p.indent { pad += "    "; i += 1 }
+  p.out.push(pad + s)
+}
+
+fn P_stmts(p: inout Parser) {
+  while not P_at(p, "}") and not P_at(p, "eof") {
+    P_stmt(p)
   }
-  advance()
 }
 
-// ===== C# OUTPUT =====
-var out: [Str] = []
-fn emit(s: Str) { out.push(s) }
-fn emit_line(s: Str) { out.push("            " + s) }
-
-// ===== TYPE MAPPING =====
-fn map_type(name: Str) -> Str {
-  if name == "Int" { return "object" }
-  if name == "Str" { return "object" }
-  if name == "Bool" { return "object" }
-  return "object"
+fn P_stmt(p: inout Parser) {
+  let k = P_kind(p)
+  if k == "let" or k == "var" { P_let(p) }
+  else if k == "return" { P_return(p) }
+  else if k == "if" { P_if(p) }
+  else if k == "while" { P_while(p) }
+  else if k == "for" { P_for(p) }
+  else { P_expr_stmt(p) }
 }
 
-// ===== EXPRESSION PRECEDENCE CLIMBING =====
-// Returns C# expression string
-fn parse_expr() -> Str { parse_binary(0) }
+fn P_let(p: inout Parser) {
+  P_advance(p)
+  let name = P_val(p)
+  P_advance(p)
+  P_expect(p, "=")
+  let expr = P_expr(p)
+  P_emit(p, "var " + name + " = " + expr + ";")
+}
 
-fn op_prec(op: Str) -> Int {
+fn P_return(p: inout Parser) {
+  P_advance(p)
+  if P_at(p, "}") {
+    P_emit(p, "return RT.UNIT;")
+  } else {
+    let e = P_expr(p)
+    P_emit(p, "return " + e + ";")
+  }
+}
+
+fn P_if(p: inout Parser) {
+  P_advance(p)
+  let cond = P_expr(p)
+  P_emit(p, "if (RT.Truthy(" + cond + ")) {")
+  P_indent(p)
+  P_block(p)
+  P_dedent(p)
+  if P_at(p, "else") {
+    P_advance(p)
+    if P_at(p, "if") {
+      P_emit(p, "} else {")
+      P_indent(p)
+      P_if(p)
+      P_dedent(p)
+      P_emit(p, "}")
+    } else {
+      P_emit(p, "} else {")
+      P_indent(p)
+      P_block(p)
+      P_dedent(p)
+      P_emit(p, "}")
+    }
+  } else {
+    P_emit(p, "}")
+  }
+}
+
+fn P_while(p: inout Parser) {
+  P_advance(p)
+  let cond = P_expr(p)
+  P_emit(p, "while (RT.Truthy(" + cond + ")) {")
+  P_indent(p)
+  P_block(p)
+  P_dedent(p)
+  P_emit(p, "}")
+}
+
+fn P_for(p: inout Parser) {
+  P_advance(p)
+  let var_name = P_val(p)
+  P_advance(p)
+  P_expect(p, "in")
+  let iter = P_expr(p)
+  P_emit(p, "foreach (var " + var_name + " in RT.Iterate(" + iter + ")) {")
+  P_indent(p)
+  P_block(p)
+  P_dedent(p)
+  P_emit(p, "}")
+}
+
+fn P_block(p: inout Parser) {
+  P_expect(p, "{")
+  P_stmts(p)
+  P_expect(p, "}")
+}
+
+fn P_indent(p: inout Parser) { p.indent += 1 }
+fn P_dedent(p: inout Parser) { p.indent -= 1 }
+
+fn P_expr_stmt(p: inout Parser) {
+  let e = P_expr(p)
+  P_emit(p, e + ";")
+}
+
+// ===== EXPRESSION PARSING (precedence climbing) =====
+fn P_expr(p: inout Parser) -> Str { P_binary(p, 0) }
+
+fn P_prec(op: Str) -> Int {
   if op == "or" { return 1 }
   if op == "and" { return 2 }
   if op == "==" { return 3 }
@@ -62,22 +158,25 @@ fn op_prec(op: Str) -> Int {
   return 0
 }
 
-fn is_binop(t: Token) -> Bool {
-  if t.kind == "and" { return true }
-  if t.kind == "or" { return true }
-  if t.kind == "dotdot" { return false }
-  if t.kind == "op" {
-    return t.value == "+" || t.value == "-" || t.value == "*" ||
-           t.value == "/" || t.value == "%" || t.value == "==" ||
-           t.value == "!=" || t.value == "<" || t.value == ">" ||
-           t.value == "<=" || t.value == ">="
-  }
+fn P_is_binop(p: Parser) -> Bool {
+  let k = P_kind(p)
+  if k == "and" { return true }
+  if k == "or" { return true }
+  if k == "+" { return true }
+  if k == "-" { return true }
+  if k == "*" { return true }
+  if k == "/" { return true }
+  if k == "%" { return true }
+  if k == "==" { return true }
+  if k == "!=" { return true }
+  if k == "<" { return true }
+  if k == ">" { return true }
+  if k == "<=" { return true }
+  if k == ">=" { return true }
   return false
 }
 
-fn cs_binop(op: Str, l: Str, r: Str) -> Str {
-  if op == "and" { return "RT.Truthy(" + l + ") ? " + r + " : (object)false" }
-  if op == "or" { return "RT.Truthy(" + l + ") ? (object)true : " + r }
+fn P_binop_cs(op: Str, l: Str, r: Str) -> Str {
   if op == "+" { return "RT.Add(" + l + ", " + r + ")" }
   if op == "-" { return "RT.Sub(" + l + ", " + r + ")" }
   if op == "*" { return "RT.Mul(" + l + ", " + r + ")" }
@@ -89,51 +188,54 @@ fn cs_binop(op: Str, l: Str, r: Str) -> Str {
   if op == ">" { return "RT.Gt(" + l + ", " + r + ")" }
   if op == "<=" { return "RT.Le(" + l + ", " + r + ")" }
   if op == ">=" { return "RT.Ge(" + l + ", " + r + ")" }
+  if op == "and" { return "RT.Truthy(" + l + ") ? " + r + " : (object)false" }
+  if op == "or" { return "RT.Truthy(" + l + ") ? (object)true : " + r }
   return l
 }
 
-fn parse_binary(min_prec: Int) -> Str {
-  var left = parse_unary()
-  while is_binop(peek()) {
-    let op = peek().value
-    let prec = op_prec(op)
+fn P_binary(p: inout Parser, min_prec: Int) -> Str {
+  var left = P_unary(p)
+  while P_is_binop(p) {
+    let op = P_val(p)
+    let prec = P_prec(op)
     if prec < min_prec { break }
-    advance()
-    let right = parse_binary(prec + 1)
-    left = cs_binop(op, left, right)
+    P_advance(p)
+    let right = P_binary(p, prec + 1)
+    left = P_binop_cs(op, left, right)
   }
   left
 }
 
-fn parse_unary() -> Str {
-  if at("-") {
-    advance()
-    let v = parse_unary()
+fn P_unary(p: inout Parser) -> Str {
+  if P_at(p, "-") {
+    P_advance(p)
+    let v = P_unary(p)
     return "RT.Neg(" + v + ")"
   }
-  parse_postfix()
+  P_postfix(p)
 }
 
-fn parse_postfix() -> Str {
-  var e = parse_primary()
+fn P_postfix(p: inout Parser) -> Str {
+  var e = P_primary(p)
   while true {
-    if at(".") {
-      advance()
-      let name = advance().value
-      if at("(") {
-        let args = parse_args()
+    if P_at(p, ".") {
+      P_advance(p)
+      let name = P_val(p)
+      P_advance(p)
+      if P_at(p, "(") {
+        let args = P_args(p)
         e = "RT.CallMethod(" + e + ", \"" + name + "\", new object[] { " + args + " })"
       } else {
         e = "RT.StructGet(" + e + ", \"" + name + "\")"
       }
-    } else if at("(") {
-      let args = parse_args()
+    } else if P_at(p, "(") {
+      let args = P_args(p)
       e = "RT.CallFn(" + e + ", new object[] { " + args + " })"
-    } else if at("[") {
-      advance()
-      let idx = parse_expr()
-      expect("]")
-      e = "RT.Idx(" + e + ", " + idx + ")"
+    } else if P_at(p, "[") {
+      P_advance(p)
+      let idx = P_expr(p)
+      P_expect(p, "]")
+      e = "RT.StrIdx(" + e + ", " + idx + ")"
     } else {
       break
     }
@@ -141,162 +243,34 @@ fn parse_postfix() -> Str {
   e
 }
 
-fn parse_args() -> Str {
-  expect("(")
+fn P_args(p: inout Parser) -> Str {
+  P_expect(p, "(")
   var args: [Str] = []
-  if !at(")") {
-    args.push(parse_expr())
-    while at(",") {
-      advance()
-      args.push(parse_expr())
+  if not P_at(p, ")") {
+    args.push(P_expr(p))
+    while P_at(p, ",") {
+      P_advance(p)
+      args.push(P_expr(p))
     }
   }
-  expect(")")
+  P_expect(p, ")")
   args.join(", ")
 }
 
-fn parse_primary() -> Str {
-  let t = peek()
-  if t.kind == "int" {
-    advance()
-    return "(object)(long)(" + t.value + ")"
-  }
-  if t.kind == "string" {
-    advance()
-    return "(object)" + t.value
-  }
-  if t.kind == "true" { advance(); return "(object)true" }
-  if t.kind == "false" { advance(); return "(object)false" }
-  if t.kind == "ident" {
-    advance()
-    return "CsSafe(" + t.value + ")"
-  }
-  if t.kind == "(" {
-    advance()
-    let inner = parse_expr()
-    expect(")")
+fn P_primary(p: inout Parser) -> Str {
+  let k = P_kind(p)
+  let v = P_val(p)
+  if k == "int" { P_advance(p); return "(object)(long)(" + v + ")" }
+  if k == "string" { P_advance(p); return "(object)" + v }
+  if k == "true" { P_advance(p); return "(object)true" }
+  if k == "false" { P_advance(p); return "(object)false" }
+  if k == "ident" { P_advance(p); return v }
+  if k == "(" {
+    P_advance(p)
+    let inner = P_expr(p)
+    P_expect(p, ")")
     return inner
   }
-  advance()
+  P_advance(p)
   return "RT.UNIT"
-}
-
-fn CsSafe(name: Str) -> Str { name }
-
-// ===== STATEMENTS =====
-fn parse_stmt() -> Str {
-  let t = peek()
-  if t.kind == "let" || t.kind == "var" {
-    return parse_let()
-  }
-  if t.kind == "return" {
-    advance()
-    if at("}") || peek().line != t.line {
-      return "return RT.UNIT;"
-    }
-    let v = parse_expr()
-    return "return " + v + ";"
-  }
-  if t.kind == "while" {
-    return parse_while()
-  }
-  if t.kind == "if" {
-    return parse_if_stmt()
-  }
-  // expression statement
-  let e = parse_expr()
-  return e + ";"
-}
-
-fn parse_let() -> Str {
-  advance()
-  let name = advance().value
-  expect("=")
-  let init = parse_expr()
-  return "var " + name + " = " + init + ";"
-}
-
-fn parse_while() -> Str {
-  advance()
-  let cond = parse_expr()
-  let body = parse_braced_stmts()
-  return "while (RT.Truthy(" + cond + ")) { " + body + " }"
-}
-
-fn parse_if_stmt() -> Str {
-  advance()
-  let cond = parse_expr()
-  let then_body = parse_braced_stmts()
-  var result = "if (RT.Truthy(" + cond + ")) { " + then_body + " }"
-  if at("else") {
-    advance()
-    if at("if") {
-      result = result + " else " + parse_if_stmt()
-    } else {
-      let else_body = parse_braced_stmts()
-      result = result + " else { " + else_body + " }"
-    }
-  }
-  result
-}
-
-fn parse_braced_stmts() -> Str {
-  expect("{")
-  var stmts: [Str] = []
-  while !at("}") && !at("eof") {
-    stmts.push(parse_stmt())
-  }
-  expect("}")
-  stmts.join(" ")
-}
-
-// ===== TOP LEVEL =====
-fn parse_and_emit() {
-  while !at("eof") {
-    if at("fn") {
-      advance()
-      let name = advance().value
-      var params: [Str] = []
-      expect("(")
-      if !at(")") {
-        params.push(advance().value + " object")
-        while at(",") {
-          advance()
-          params.push(advance().value + " object")
-        }
-      }
-      expect(")")
-      var ret = "object"
-      if at("arrow") { advance(); ret = "object" }
-      emit("        public static " + ret + " " + name + "(" + params.join(", ") + ") {")
-      var body_stmts: [Str] = []
-      expect("{")
-      while !at("}") && !at("eof") {
-        body_stmts.push(parse_stmt())
-      }
-      expect("}")
-      if body_stmts.len() == 0 || !body_stmts.get(body_stmts.len() - 1).starts_with("return") {
-        body_stmts.push("return RT.UNIT;")
-      }
-      for s in body_stmts {
-        emit("            " + s)
-      }
-      emit("        }")
-      emit("")
-    } else if at("struct") {
-      advance()
-      let name = advance().value
-      emit("        public static object " + name + "(object f0, object f1, object f2) {")
-      emit("            Bump();")
-      emit("            var d = new Dictionary<string, object>();")
-      emit("            return new AbStruct { Type = \"" + name + "\", Fields = d };")
-      emit("        }")
-      emit("")
-      // skip to closing brace
-      while !at("}") { advance() }
-      advance()
-    } else {
-      advance()
-    }
-  }
 }

@@ -1,0 +1,37 @@
+use "./self_lexer.ab"
+
+fn main() {
+  let src = std.fs.read_file("self/self_lexer.ab").unwrap()
+  let tokens = self_lexer.lex(src)
+  println("tokenized {tokens.len()} tokens from {src.len()} chars")
+
+  var keywords = 0
+  var idents = 0
+  var numbers = 0
+  var strings = 0
+  var ops = 0
+  var other = 0
+
+  for t in tokens {
+    if t.kind == "ident" {
+      idents += 1
+    } else if t.kind == "int" or t.kind == "float" {
+      numbers += 1
+    } else if t.kind == "string" {
+      strings += 1
+    } else if t.kind == "op" or t.kind == "opassign" {
+      ops += 1
+    } else if t.kind == "eof" {
+      other += 1
+    } else {
+      keywords += 1
+    }
+  }
+
+  println("keywords: {keywords}")
+  println("identifiers: {idents}")
+  println("numbers: {numbers}")
+  println("strings: {strings}")
+  println("operators: {ops}")
+  println("other: {other}")
+}

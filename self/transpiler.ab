@@ -176,7 +176,7 @@ fn rt_prelude() -> Str {
     "public static class RT \{",
     "    public static readonly object UNIT = new object();",
     "    public static bool Truthy(object v) \{ return v is bool && (bool)v; \}",
-    "    public static void Println(object v) \{ Console.WriteLine(v?.ToString() ?? \"()\"); \}",
+    "    public static void Println(object v) \{ Console.WriteLine(v == null ? \"()\" : v.ToString()); \}",
     "    public static object CallFn(object f, object[] args) \{ ",
     "        Console.Error.WriteLine(\"ERROR: function calls not supported in transpiled output\");",
     "        return null;",
@@ -202,31 +202,30 @@ fn transpile(src: Str) -> Str {
   for raw in lines {
     let t = raw.trim()
     if t.len() == 0 {
-      body.push("")
       continue
     }
     var d = depth
-    if starts_with(t, "\}") { d -= 1 }
+    if starts_with(t, "\}") {
+      d -= 1
+      if d == 0 and body.len() > 0 {
+        let prev = body.get(body.len() - 1).unwrap().trim()
+        if not starts_with(prev, "return") {
+          body.push("    return RT.UNIT;")
+        }
+      }
+    }
     if d < 0 { d = 0 }
-    body.push("  ".repeat(d) + transpile_line(t))
+    body.push("  ".repeat(d + 1) + transpile_line(t))
     var opened = 0
     var closed = 0
     if ends_with(t, "\{") { opened += 1 }
     if starts_with(t, "\}") { closed += 1 }
     depth += opened - closed
   }
-  prelude + "\n" + join_str(body, "\n")
+  let cls_open = "public static class Program \{"
+  let cls_close = "\}"
+  prelude + "\n" + cls_open + "\n" + join_str(body, "\n") + "\n" + cls_close + "\n" +
+    "public static class Entry \{ public static void Main() \{ Program.main(); \} \}"
 }
 
-// Standalone entry: reads input.ab, writes output.cs.
-fn main() {
-  let r = std.fs.read_file("input.ab")
-  if r.is_err() {
-    println("error: cannot read input.ab")
-    return
-  }
-  let src = r.unwrap()
-  let cs = transpile(src)
-  std.fs.write_file("output.cs", cs).unwrap()
-  println("transpiled {src.len()} chars of ARBOR -> {cs.len()} chars of C#")
-}
+// Library only — see test_transpile.ab for a runnable driver with main().

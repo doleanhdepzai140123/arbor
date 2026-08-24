@@ -1,4 +1,4 @@
-# ARBOR v0.2.0
+# ARBOR v0.3.0
 
 <p align="center"><img src="docs/logo_green_no_background.png" alt="ARBOR" width="280"></p>
 
@@ -35,8 +35,14 @@ node bin\arbor.js build examples\native_hello.ab -o hello.exe   # COMPILE to nat
 
 node bin\arbor.js check your_file.ab         # safety report only
 node bin\arbor.js repl                       # interactive session
-node tests\run_tests.mjs                     # 22/22 conformance tests
-node tests\native_parity.mjs                 # 9/9 compiled-vs-VM parity tests
+npm test                                     # 25 conformance + 12 native parity + self-hosting parity
+
+# Self-hosting — ARBOR compiles ARBOR:
+node bin\arbor.js run self\self_analysis.ab  # ARBOR tokenizes its own lexer's source
+node bin\arbor.js run self\test_transpile.ab # ARBOR transpiler (written in ARBOR) -> C#
+csc /nologo /t:exe /out:hello2.exe output.cs # compile the transpiled output...
+.\hello2.exe                                 # ...and run it: "hello from self-hosted ARBOR!"
+node tests\self_hosted.mjs                   # self-hosted lexer == reference lexer, VM & native
 ```
 
 `arbor build` lowers ARBOR through the C# back end and invokes the .NET
@@ -105,6 +111,12 @@ src/compiler/
   pe.js                 PE32+ executable writer with import tables (WORKING)
   runtime_native.js     Hand-emitted assembly runtime (in progress)
   c_backend.js          ARBOR → C11 generator (experimental)
+
+self/                   ARBOR written in ARBOR (self-hosting)
+  self_lexer.ab         Lexer — token-for-token parity with src/lexer.js, VM & native
+  self_parser.ab        Recursive-descent parser emitting C# directly
+  transpiler.ab         ARBOR → C# line-level transpiler (bootstrap loop)
+  lexdump.ab            Token dump driver used by tests/self_hosted.mjs
 ```
 
 ## Documentation
@@ -117,10 +129,13 @@ src/compiler/
 
 ## Status
 
-v0.2 ships a complete front end (lexer/parser/checker), a reference interpreter
-with exact deterministic semantics, a 22-test conformance suite, a **working
-native compiler** (`arbor build` → standalone .exe via the C# back end, with
-9/9 compiled-vs-VM parity), and project tooling. The self-contained x86-64
-pipeline (encoder + PE writer + hand-emitted assembly runtime) continues in
-parallel — see [docs/COMPILER.md](docs/COMPILER.md) for the precise
-architecture, the loader findings, and current milestones.
+v0.3 ships a complete front end (lexer/parser/checker), a reference interpreter
+with exact deterministic semantics, a 25-test conformance suite, a **working
+native compiler** (`arbor build` → standalone .exe via the C# back end, 12/12
+compiled-vs-VM parity), project tooling, and the first **self-hosting
+milestone**: an ARBOR lexer, parser and transpiler written in ARBOR itself,
+with token-for-token parity against the reference implementation in both VM
+and natively compiled form. The self-contained x86-64 pipeline (encoder + PE
+writer + hand-emitted assembly runtime) continues in parallel — see
+[docs/COMPILER.md](docs/COMPILER.md) for the precise architecture and
+[docs/ROADMAP.md](docs/ROADMAP.md) for where the language goes next.

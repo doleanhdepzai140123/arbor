@@ -1,0 +1,42 @@
+// Sample used by tests/self_hosted.mjs — exercises the lexer subset that
+// both the reference and the self-hosted lexer support.
+// No /// doc comments, no *= /=, no hex ints, no float exponents,
+// no string interpolation, no ! or &.
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+fn add(a: Int, b: Int) -> Int {
+  return a + b
+}
+
+fn classify(n: Int) -> Str {
+  if n >= 10 {
+    return "big"
+  } else if n <= -5 {
+    return "small"
+  }
+  return "mid"
+}
+
+fn main() {
+  let name = "world\ttabbed\n"
+  var total = 0
+  let xs = [3, 14, 15]
+  for x in xs {
+    total += x
+  }
+  let p = Point { x: 1, y: total * 2 }
+  let ratio = 0.5
+  let ok = total != 0 and not (ratio > 1.0)
+  if ok {
+    println("sum is")
+    println(total)
+    println(p.x)
+    println(classify(total))
+  } else {
+    println("empty")
+  }
+}

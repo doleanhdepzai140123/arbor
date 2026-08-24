@@ -1,1 +1,7 @@
-﻿fn main() { println("hello from self-hosted ARBOR!") }
+﻿fn main() {
+  let msg = "hello from self-hosted ARBOR!"
+  println(msg)
+  let a = 20
+  let b = 22
+  println(a + b)
+}

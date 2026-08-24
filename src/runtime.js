@@ -189,6 +189,9 @@ export function makeMethodRunner(ctx) {
         if (!isIntVal(n) || n < 0 || n > 10000) trap('R0010', `.repeat(n) needs 0 <= n <= 10000`, span);
         return r.repeat(n);
       }
+      case 'starts_with': arity(name, args, 1, span); return r.startsWith(args[0]);
+      case 'ends_with': arity(name, args, 1, span); return r.endsWith(args[0]);
+      case 'replace': arity(name, args, 2, span); return r.split(args[0]).join(args[1]);
       case 'to_int': {
         arity(name, args, 0, span);
         const t = r.trim();

@@ -1,0 +1,21 @@
+fn main() {
+  let s = "hello world"
+  println("starts_with 'hello': {s.starts_with("hello")}")
+  println("ends_with 'world': {s.ends_with("world")}")
+  println("replace: {s.replace("world", "ARBOR")}")
+
+  let t = "a,b,c"
+  let parts = t.split(",")
+  println("split into {parts.len()} parts")
+  for p in parts {
+    println("  part: {p}")
+  }
+
+  let nums: [Int] = [5, 2, 8, 1]
+  var sum = 0
+  for n in nums {
+    sum += n
+  }
+  println("sum = {sum}")
+  println("count = {nums.len()}")
+}

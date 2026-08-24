@@ -1,0 +1,36 @@
+{
+  "name": "arbor-vscode",
+  "displayName": "ARBOR Language Support",
+  "description": "Syntax highlighting, diagnostics, and LSP for the ARBOR programming language",
+  "version": "0.2.1",
+  "publisher": "arbor-lang",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:arbor"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "arbor",
+      "aliases": ["ARBOR", "arbor"],
+      "extensions": [".ab"],
+      "configuration": "./arbor-language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "arbor",
+      "scopeName": "source.arbor",
+      "path": "./arbor.tmLanguage.json"
+    }],
+    "configuration": {
+      "type": "object",
+      "title": "ARBOR",
+      "properties": {
+        "arbor.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to arbor LSP server (leave empty to use built-in)"
+        }
+      }
+    }
+  }
+}

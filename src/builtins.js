@@ -149,6 +149,9 @@ export const METHODS = {
     chars: { sig: () => ({ selfMode: 'in', params: [], ret: mkArray(TyStr) }) },
     repeat: { sig: () => ({ selfMode: 'in', params: [{ mode: 'in', ty: TyInt }], ret: TyStr }) },
     to_int: { sig: () => ({ selfMode: 'in', params: [], ret: BUILTIN_TYPES.Result.build([TyInt, TyStr]) }) },
+    starts_with: { sig: () => ({ selfMode: 'in', params: [{ mode: 'in', ty: TyStr }], ret: TyBool }) },
+    ends_with: { sig: () => ({ selfMode: 'in', params: [{ mode: 'in', ty: TyStr }], ret: TyBool }) },
+    replace: { sig: () => ({ selfMode: 'in', params: [{ mode: 'in', ty: TyStr }, { mode: 'in', ty: TyStr }], ret: TyStr }) },
   },
   bool: {
     to_str: { sig: () => ({ selfMode: 'in', params: [], ret: TyStr }) },

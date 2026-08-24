@@ -654,6 +654,9 @@ class CsGen {
         if (m === 'chars') return `RT.StrChars(${recv})`;
         if (m === 'repeat') return `RT.StrRepeat(${recv}, ${A()[0]})`;
         if (m === 'to_int') return `RT.StrToInt(${recv})`;
+        if (m === 'starts_with') return `RT.StrStartsWith(${recv}, ${A()[0]})`;
+        if (m === 'ends_with') return `RT.StrEndsWith(${recv}, ${A()[0]})`;
+        if (m === 'replace') return `RT.StrReplace(${recv}, ${A()[0]}, ${A()[1]})`;
         break;
       case 'bool':
         if (m === 'to_str') return `RT.ToStrAny(${recv})`;
@@ -1409,6 +1412,9 @@ public static class RT {
         for (long i = 0; i < n; i++) sb.Append((string)s);
         return sb.ToString();
     }
+    public static bool StrStartsWith(object s, object p) { return ((string)s).StartsWith((string)p); }
+    public static bool StrEndsWith(object s, object p) { return ((string)s).EndsWith((string)p); }
+    public static object StrReplace(object s, object oldV, object newV) { return ((string)s).Replace((string)oldV, (string)newV); }
     public static object StrToInt(object s) {
         long v;
         if (long.TryParse(((string)s).Trim(), out v)) return OkO((object)v);

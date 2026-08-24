@@ -1,0 +1,95 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ARBOR",
+  "scopeName": "source.arbor",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#doc-comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#function-calls" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.arbor", "match": "//.*$" },
+        { "name": "comment.block.arbor", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "doc-comments": {
+      "patterns": [
+        { "name": "comment.line.documentation.arbor", "match": "///.*$" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.interpolated.arbor",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.arbor", "match": "\\\\[nrt\\\\\"{]" },
+            { "name": "meta.embedded.line.arbor", "begin": "\\{", "end": "\\}", "patterns": [{ "include": "source.arbor" }] }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.arbor",
+          "match": "\\b(if|else|while|for|in|match|return|break|continue|spawn|region|and|or|not)\\b"
+        },
+        {
+          "name": "keyword.declaration.arbor",
+          "match": "\\b(fn|let|var|const|struct|enum|use)\\b"
+        },
+        {
+          "name": "constant.language.arbor",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "storage.modifier.arbor",
+          "match": "\\b(inout|in)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.builtin.arbor",
+          "match": "\\b(Int|Float|Bool|Str|Unit|Array|Map|Set|Table|Handle|Option|Result)\\b"
+        },
+        {
+          "name": "support.class.arbor",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.float.arbor", "match": "\\b\\d+\\.\\d+\\b" },
+        { "name": "constant.numeric.integer.arbor", "match": "\\b\\d+\\b" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arbor", "match": "=>|->|\\+=|-=|\\*=|/=|==|!=|<=|>=|\\+\\+|--|[+\\-*/%<>=!]" }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        { "name": "entity.name.function.arbor", "match": "\\b[a-z_][A-Za-z0-9_]*(?=\\s*\\()" }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        { "name": "variable.other.arbor", "match": "\\b[a-z_][A-Za-z0-9_]*\\b" }
+      ]
+    }
+  }
+}

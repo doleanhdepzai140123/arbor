@@ -1,0 +1,9 @@
+starts_with 'hello': true
+ends_with 'world': true
+replace: hello ARBOR
+split into 3 parts
+  part: a
+  part: b
+  part: c
+sum = 16
+count = 4

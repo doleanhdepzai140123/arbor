@@ -1,6 +1,6 @@
 {
   "name": "arbor-lang",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "ARBOR — the tree-shaped safe language: fast compile, tiny mental model, structural memory safety",
   "type": "module",
   "main": "src/interp.js",
@@ -8,10 +8,11 @@
     "arbor": "bin/arbor.js"
   },
   "scripts": {
-    "test": "node tests/run_tests.mjs && node tests/native_parity.mjs && node tests/self_hosted.mjs",
+    "test": "node tests/run_tests.mjs && node tests/native_parity.mjs && node tests/self_hosted.mjs && node tests/bootstrap.mjs",
     "test:vm": "node tests/run_tests.mjs",
     "test:native": "node tests/native_parity.mjs",
     "test:selfhost": "node tests/self_hosted.mjs",
+    "test:bootstrap": "node tests/bootstrap.mjs",
     "bench": "node tests/bench.mjs",
     "repl": "node bin/arbor.js repl"
   },

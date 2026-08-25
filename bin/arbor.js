@@ -13,7 +13,7 @@ import { loadProgram } from '../src/loader.js';
 import { Fmt } from '../src/formatter.js';
 import { ArborError, renderError } from '../src/diagnostics.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 function findCsc() {
   if (process.env.ARBOR_CSC) return process.env.ARBOR_CSC;
   const candidates = process.platform === 'win32'

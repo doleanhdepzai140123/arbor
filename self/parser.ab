@@ -1,0 +1,686 @@
+// parser.ab — ARBOR parser written in ARBOR (v2).
+// Parses source text into a tagged-tree IR (struct Node) consumed by
+// checker.ab and emit.ab. Supports: fn/method/struct/enum decls,
+// let/var, assignment & opassign, if/else, while, for-in, break/continue,
+// return, calls, module calls, methods, field access, array & struct
+// literals, string interpolation (desugared to concatenation), and
+// match statements.
+//
+// Self-imposed subset rules (proven safe in VM *and* native builds):
+//   - element access only via .get(i)/.take(i)/for-in — never xs[i]
+//   - bind results to locals before touching their fields
+//   - functions returning values end with a tail expression
+
+use "./self_lexer.ab"
+
+struct Node {
+  tag: Str
+  s1: Str
+  s2: Str
+  line: Int
+  kids: [Node]
+}
+
+struct Pr {
+  ks: [Str]
+  vs: [Str]
+  ls: [Int]
+  pos: Int
+}
+
+// ---------- parser construction ----------
+
+fn mk_pr(src: Str) -> Pr {
+  let toks = lex(src)
+  var ks: [Str] = []
+  var vs: [Str] = []
+  var ls: [Int] = []
+  for t in toks {
+    ks.push(t.kind)
+    vs.push(t.value)
+    ls.push(t.line)
+  }
+  var p = Pr { ks: ks, vs: vs, ls: ls, pos: 0 }
+  p
+}
+
+fn pk(p: in Pr) -> Str { p.ks.get(p.pos).unwrap() }
+fn pv(p: in Pr) -> Str { p.vs.get(p.pos).unwrap() }
+fn pline(p: in Pr) -> Int { p.ls.get(p.pos).unwrap() }
+
+// did a newline separate this token from the previous one?
+// (derived from line numbers — multi-line strings may blur this, which
+// is acceptable for the subset this compiler targets)
+fn p_nl(p: in Pr) -> Bool {
+  if p.pos == 0 {
+    return false
+  }
+  let prev = p.ls.get(p.pos - 1).unwrap()
+  let cur = p.ls.get(p.pos).unwrap()
+  prev != cur
+}
+
+fn pat(p: in Pr, k: Str) -> Bool {
+  pk(p) == k
+}
+
+fn padv(p: inout Pr) {
+  if p.pos < p.ks.len() - 1 {
+    p.pos += 1
+  }
+}
+
+fn pfail(msg: Str) -> Node {
+  println("parse error: {msg}")
+  assert(msg.len() < 0)
+  n_leaf("ident", "?", 0)
+}
+
+fn pexpect(p: inout Pr, k: Str) -> Str {
+  if pk(p) != k {
+    let msg = "expected '{k}' found '{pv(p)}' at line {pline(p)}"
+    println("parse error: {msg}")
+    assert(msg.len() < 0)
+    return ""
+  }
+  let v = pv(p)
+  padv(p)
+  v
+}
+
+// ---------- node constructors ----------
+
+fn n_leaf(tag: Str, s1: Str, line: Int) -> Node {
+  var n = Node { tag: tag, s1: s1, s2: "", line: line, kids: [] }
+  n
+}
+
+fn n_full(tag: Str, s1: Str, s2: Str, line: Int, kids: [Node]) -> Node {
+  var n = Node { tag: tag, s1: s1, s2: s2, line: line, kids: kids }
+  n
+}
+
+fn to_str_i(n: Int) -> Str {
+  "{n}"
+}
+
+// ---------- program / declarations ----------
+
+fn parse_program(src: Str) -> Node {
+  var p = mk_pr(src)
+  var decls: [Node] = []
+  while not pat(p, "eof") {
+    if pat(p, "use") {
+      padv(p)
+      if pat(p, "string") { padv(p) }
+      if pat(p, "as") {
+        padv(p)
+        if pat(p, "ident") { padv(p) }
+      }
+    } else if pat(p, "fn") {
+      decls.push(parse_fndef(p))
+    } else if pat(p, "struct") {
+      decls.push(parse_structdef(p))
+    } else if pat(p, "enum") {
+      decls.push(parse_enumdef(p))
+    } else {
+      let msg = "expected fn/struct/enum/use at top level, found '{pv(p)}' (line {pline(p)})"
+      println("parse error: {msg}")
+      assert(msg.len() < 0)
+    }
+  }
+  n_full("prog", "", "", 0, decls)
+}
+
+fn parse_fndef(p: inout Pr) -> Node {
+  let ln = pline(p)
+  pexpect(p, "fn")
+  var name = pv(p)
+  padv(p)
+  while pat(p, ".") {
+    padv(p)
+    name = name + "__" + pv(p)
+    padv(p)
+  }
+  var params: [Node] = []
+  pexpect(p, "(")
+  if not pat(p, ")") {
+    params.push(parse_param(p))
+    while pat(p, ",") {
+      padv(p)
+      params.push(parse_param(p))
+    }
+  }
+  pexpect(p, ")")
+  var ret = ""
+  if pat(p, "arrow") {
+    padv(p)
+    ret = parse_type_text(p)
+  }
+  let body = parse_block(p)
+  params.push(body)
+  n_full("fndef", name, ret, ln, params)
+}
+
+fn parse_param(p: inout Pr) -> Node {
+  let ln = pline(p)
+  // mode may precede the name (fn f(in x: T)) or follow the colon
+  // (fn f(x: in T)) — accept both spellings
+  if pat(p, "in") {
+    padv(p)
+  } else if pat(p, "inout") {
+    padv(p)
+  }
+  let name = pv(p)
+  padv(p)
+  if pat(p, ":") {
+    padv(p)
+    if pat(p, "in") {
+      padv(p)
+    } else if pat(p, "inout") {
+      padv(p)
+    }
+    parse_type_text(p)
+  }
+  n_leaf("param", name, ln)
+}
+
+fn parse_type_text(p: inout Pr) -> Str {
+  var out = ""
+  while true {
+    // a newline always ends a type expression
+    if out.len() > 0 and p_nl(p) {
+      break
+    }
+    let k = pk(p)
+    if k == "ident" or k == "inout" or k == "[" or k == "]" or k == "." {
+      out += pv(p)
+      padv(p)
+    } else {
+      break
+    }
+  }
+  out
+}
+
+fn parse_structdef(p: inout Pr) -> Node {
+  let ln = pline(p)
+  pexpect(p, "struct")
+  let name = pv(p)
+  padv(p)
+  var fields: [Node] = []
+  pexpect(p, "\{")
+  while not pat(p, "\}") {
+    let fname = pv(p)
+    padv(p)
+    pexpect(p, ":")
+    let ty = parse_type_text(p)
+    fields.push(n_full("fielddef", fname, ty, pline(p), []))
+  }
+  pexpect(p, "\}")
+  n_full("structdef", name, "", ln, fields)
+}
+
+fn parse_enumdef(p: inout Pr) -> Node {
+  let ln = pline(p)
+  pexpect(p, "enum")
+  let name = pv(p)
+  padv(p)
+  var variants: [Node] = []
+  pexpect(p, "\{")
+  while not pat(p, "\}") {
+    let vname = pv(p)
+    padv(p)
+    var count = 0
+    if pat(p, "(") {
+      padv(p)
+      count = 1
+      parse_type_text(p)
+      while pat(p, ",") {
+        padv(p)
+        parse_type_text(p)
+        count += 1
+      }
+      pexpect(p, ")")
+    }
+    variants.push(n_full("variantdef", vname, to_str_i(count), pline(p), []))
+  }
+  pexpect(p, "\}")
+  n_full("enumdef", name, "", ln, variants)
+}
+
+// ---------- statements ----------
+
+fn parse_block(p: inout Pr) -> Node {
+  let ln = pline(p)
+  pexpect(p, "\{")
+  var stmts: [Node] = []
+  while not pat(p, "\}") and not pat(p, "eof") {
+    parse_stmt(p, stmts)
+  }
+  pexpect(p, "\}")
+  n_full("block", "", "", ln, stmts)
+}
+
+// parses one statement and appends it to acc (borrowed mutably)
+fn parse_stmt(p: inout Pr, acc: inout [Node]) {
+  if pat(p, "let") or pat(p, "var") {
+    let mutable_ = pat(p, "var")
+    let ln = pline(p)
+    padv(p)
+    let name = pv(p)
+    padv(p)
+    if pat(p, ":") {
+      padv(p)
+      parse_type_text(p)
+    }
+    pexpect(p, "=")
+    let e = parse_expr(p)
+    var tag = "let"
+    if mutable_ {
+      tag = "var"
+    }
+    acc.push(n_full(tag, name, "", ln, [e]))
+    return
+  }
+  if pat(p, "return") {
+    let ln = pline(p)
+    padv(p)
+    var kids: [Node] = []
+    if not pat(p, "\}") and not pat(p, "eof") {
+      kids.push(parse_expr(p))
+    }
+    acc.push(n_full("return", "", "", ln, kids))
+    return
+  }
+  if pat(p, "break") {
+    acc.push(n_leaf("break", "", pline(p)))
+    padv(p)
+    return
+  }
+  if pat(p, "continue") {
+    acc.push(n_leaf("cont", "", pline(p)))
+    padv(p)
+    return
+  }
+  if pat(p, "if") {
+    acc.push(parse_if(p))
+    return
+  }
+  if pat(p, "while") {
+    let ln = pline(p)
+    padv(p)
+    let cond = parse_expr(p)
+    let body = parse_block(p)
+    acc.push(n_full("while", "", "", ln, [cond, body]))
+    return
+  }
+  if pat(p, "for") {
+    let ln = pline(p)
+    padv(p)
+    let var_name = pv(p)
+    padv(p)
+    pexpect(p, "in")
+    let iter = parse_expr(p)
+    let body = parse_block(p)
+    acc.push(n_full("forin", var_name, "", ln, [iter, body]))
+    return
+  }
+  if pat(p, "match") {
+    acc.push(parse_match(p))
+    return
+  }
+  let ln = pline(p)
+  let e = parse_expr(p)
+  // Single move site: e goes into holder, branches take it back out.
+  var holder: [Node] = []
+  holder.push(e)
+  if pat(p, "=") or pat(p, "opassign") {
+    let target = holder.get(0).unwrap()
+    if target.tag == "ident" or target.tag == "fieldget" or target.tag == "index" {
+      var op = "="
+      if pat(p, "opassign") {
+        op = pv(p)
+      }
+      padv(p)
+      let rhs = parse_expr(p)
+      let lhs = holder.take(0)
+      var tag = "assign"
+      if op != "=" {
+        tag = "opassign"
+      }
+      acc.push(n_full(tag, op, "", ln, [lhs, rhs]))
+      return
+    }
+    let msg = "invalid assignment target at line {ln}"
+    println("parse error: {msg}")
+    assert(msg.len() < 0)
+    return
+  }
+  acc.push(n_full("exprstmt", "", "", ln, [holder.take(0)]))
+}
+
+fn parse_if(p: inout Pr) -> Node {
+  let ln = pline(p)
+  pexpect(p, "if")
+  let cond = parse_expr(p)
+  let thenb = parse_block(p)
+  var kids: [Node] = [cond, thenb]
+  if pat(p, "else") {
+    padv(p)
+    if pat(p, "if") {
+      kids.push(parse_if(p))
+    } else {
+      kids.push(parse_block(p))
+    }
+  }
+  n_full("if", "", "", ln, kids)
+}
+
+// match SUBJECT { Variant(binds) => BLOCK ... }
+fn parse_match(p: inout Pr) -> Node {
+  let ln = pline(p)
+  pexpect(p, "match")
+  let subject = parse_expr(p)
+  pexpect(p, "\{")
+  var arms: [Node] = []
+  arms.push(n_full("subject", "", "", ln, [subject]))
+  while not pat(p, "\}") {
+    let aln = pline(p)
+    let vname = pv(p)
+    padv(p)
+    var binds: [Node] = []
+    pexpect(p, "(")
+    if not pat(p, ")") {
+      binds.push(n_leaf("bind", pv(p), aln))
+      padv(p)
+      while pat(p, ",") {
+        padv(p)
+        binds.push(n_leaf("bind", pv(p), aln))
+        padv(p)
+      }
+    }
+    pexpect(p, ")")
+    pexpect(p, "fatarrow")
+    let body = parse_block(p)
+    binds.push(body)
+    arms.push(n_full("arm", vname, "", aln, binds))
+  }
+  pexpect(p, "\}")
+  n_full("match", "", "", ln, arms)
+}
+
+// ===== EXPRESSIONS (precedence climbing) =====
+
+fn parse_expr(p: inout Pr) -> Node {
+  parse_binary(p, 0)
+}
+
+fn bin_prec(op: Str) -> Int {
+  if op == "or" { return 1 }
+  if op == "and" { return 2 }
+  if op == "==" or op == "!=" { return 3 }
+  if op == "<" or op == ">" or op == "<=" or op == ">=" { return 4 }
+  if op == "+" or op == "-" { return 5 }
+  if op == "*" or op == "/" or op == "%" { return 6 }
+  -1
+}
+
+fn is_bin_tok(k: Str) -> Bool {
+  if k == "and" or k == "or" { return true }
+  if k == "op" { return true }
+  if k.len() == 1 and "+-*/%<>".contains(k) { return true }
+  false
+}
+
+fn parse_binary(p: inout Pr, min_prec: Int) -> Node {
+  let ln = pline(p)
+  var left = parse_unary(p)
+  while is_bin_tok(pk(p)) {
+    let op = pv(p)
+    let prec = bin_prec(op)
+    if prec < min_prec {
+      break
+    }
+    padv(p)
+    let right = parse_binary(p, prec + 1)
+    var combined = n_full("binop", op, "", ln, [left, right])
+    left = combined
+  }
+  left
+}
+
+fn parse_unary(p: inout Pr) -> Node {
+  let ln = pline(p)
+  if pat(p, "-") {
+    padv(p)
+    let operand = parse_unary(p)
+    return n_full("unop", "-", "", ln, [operand])
+  }
+  if pat(p, "not") {
+    padv(p)
+    let operand = parse_unary(p)
+    return n_full("unop", "not", "", ln, [operand])
+  }
+  parse_postfix(p)
+}
+
+fn parse_postfix(p: inout Pr) -> Node {
+  let ln = pline(p)
+  var e = parse_primary(p)
+  while true {
+    let at_dot = pat(p, ".")
+    let at_brk = pat(p, "[")
+    let at_par = pat(p, "(")
+    if not at_dot and not at_brk and not at_par {
+      break
+    }
+    // Single unified consumption point for `e`: it moves into kids here,
+    // exactly once per iteration, keeping the move checker happy.
+    var kids: [Node] = []
+    kids.push(e)
+    var tag = "fieldget"
+    var op = ""
+    if at_dot {
+      padv(p)
+      let name = pv(p)
+      padv(p)
+      op = name
+      if pat(p, "(") {
+        var args = parse_args(p)
+        var gi = 0
+        while gi < args.len() {
+          let a = args.get(gi).unwrap()
+          kids.push(a)
+          gi += 1
+        }
+        tag = "call"
+      }
+    } else if at_brk {
+      padv(p)
+      let idx = parse_expr(p)
+      pexpect(p, "]")
+      kids.push(idx)
+      tag = "index"
+    } else {
+      // bare direct call: callee identifier rides along as kids[0]
+      var args = parse_args(p)
+      var gi = 0
+      while gi < args.len() {
+        let a = args.get(gi).unwrap()
+        kids.push(a)
+        gi += 1
+      }
+      tag = "call"
+    }
+    var ne = n_full(tag, op, "", ln, kids)
+    e = ne
+  }
+  e
+}
+
+fn parse_args(p: inout Pr) -> [Node] {
+  pexpect(p, "(")
+  var args: [Node] = []
+  if not pat(p, ")") {
+    args.push(parse_expr(p))
+    while pat(p, ",") {
+      padv(p)
+      args.push(parse_expr(p))
+    }
+  }
+  pexpect(p, ")")
+  args
+}
+
+fn parse_primary(p: inout Pr) -> Node {
+  let k = pk(p)
+  let ln = pline(p)
+  if k == "int" {
+    let v = pv(p)
+    padv(p)
+    return n_leaf("int", v, ln)
+  }
+  if k == "float" {
+    let v = pv(p)
+    padv(p)
+    return n_leaf("float", v, ln)
+  }
+  if k == "string" {
+    let raw = pv(p)
+    padv(p)
+    return parse_string_literal(raw, ln)
+  }
+  if k == "true" or k == "false" {
+    let v = pv(p)
+    padv(p)
+    return n_leaf("bool", v, ln)
+  }
+  if k == "ident" {
+    let v = pv(p)
+    padv(p)
+    if pat(p, "\{") and p.pos + 2 < p.ks.len() {
+      let nxt = p.ks.get(p.pos + 1).unwrap()
+      let nxt2 = p.ks.get(p.pos + 2).unwrap()
+      if nxt == "ident" and nxt2 == ":" {
+        return parse_structlit(p, v, ln)
+      }
+    }
+    return n_leaf("ident", v, ln)
+  }
+  if k == "(" {
+    padv(p)
+    let inner = parse_expr(p)
+    pexpect(p, ")")
+    return inner
+  }
+  if k == "[" {
+    padv(p)
+    var items: [Node] = []
+    if not pat(p, "]") {
+      items.push(parse_expr(p))
+      while pat(p, ",") {
+        padv(p)
+        items.push(parse_expr(p))
+      }
+    }
+    pexpect(p, "]")
+    return n_full("arrlit", "", "", ln, items)
+  }
+  if k == "match" {
+    return parse_match(p)
+  }
+  if k == "if" {
+    // if used as an expression: let x = if c { a } else { b }
+    return parse_if(p)
+  }
+  pfail("unexpected token '{pv(p)}' at line {ln}")
+}
+
+fn parse_structlit(p: inout Pr, sname: Str, ln: Int) -> Node {
+  pexpect(p, "\{")
+  var vals: [Node] = []
+  while not pat(p, "\}") {
+    let fname = pv(p)
+    padv(p)
+    pexpect(p, ":")
+    let e = parse_expr(p)
+    vals.push(n_full("fieldval", fname, "", ln, [e]))
+    if pat(p, ",") {
+      padv(p)
+    }
+  }
+  pexpect(p, "\}")
+  n_full("structlit", sname, "", ln, vals)
+}
+
+// ---------- string literals & interpolation ----------
+
+// raw includes surrounding quotes; escapes preserved as source text.
+// Produces a plain str node, or a "+"-chain mixing str nodes with
+// sub-expressions parsed from interpolation fragments.
+fn parse_string_literal(raw: Str, ln: Int) -> Node {
+  var parts: [Node] = []
+  var buf = ""
+  let cs = raw.chars()
+  let n = raw.len()
+  var i = 1
+  while i < n - 1 {
+    let c = cs.get(i).unwrap()
+    if c == "\\" and i + 1 < n - 1 {
+      buf += c
+      buf += cs.get(i + 1).unwrap()
+      i += 2
+    } else if c == "\{" {
+      var depth = 1
+      var j = i + 1
+      while j < n - 1 and depth > 0 {
+        let cj = cs.get(j).unwrap()
+        if cj == "\{" {
+          depth += 1
+        } else if cj == "\}" {
+          depth -= 1
+        }
+        j += 1
+      }
+      var frag = ""
+      var t = i + 1
+      while t < j - 1 {
+        frag += cs.get(t).unwrap()
+        t += 1
+      }
+      if buf.len() > 0 {
+        parts.push(n_leaf("str", "\"" + buf + "\"", ln))
+        buf = ""
+      }
+      parts.push(parse_fragment(frag, ln))
+      i = j
+    } else {
+      buf += c
+      i += 1
+    }
+  }
+  if buf.len() > 0 or parts.len() == 0 {
+    parts.push(n_leaf("str", "\"" + buf + "\"", ln))
+  }
+  if parts.len() == 1 {
+    return parts.get(0).unwrap()
+  }
+  // left-assoc "+"-chain via owned copies (get/unwrap), intermediate var
+  // keeps the move checker happy
+  var acc = parts.get(0).unwrap()
+  var gi = 1
+  while gi < parts.len() {
+    let rhs = parts.get(gi).unwrap()
+    var combined = n_full("binop", "+", "", ln, [acc, rhs])
+    acc = combined
+    gi += 1
+  }
+  acc
+}
+
+fn parse_fragment(src: Str, ln: Int) -> Node {
+  var p = mk_pr(src)
+  let e = parse_expr(p)
+  n_full("interp", "", "", ln, [e])
+}

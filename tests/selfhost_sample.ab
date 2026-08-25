@@ -1,5 +1,6 @@
-// Sample used by tests/self_hosted.mjs — exercises the lexer subset that
-// both the reference and the self-hosted lexer support.
+// Sample used by tests/self_hosted.mjs and the bootstrap pipeline —
+// exercises the language subset that both the reference toolchain and
+// the self-hosted compiler support.
 // No /// doc comments, no *= /=, no hex ints, no float exponents,
 // no string interpolation, no ! or &.
 
@@ -9,7 +10,7 @@ struct Point {
 }
 
 fn add(a: Int, b: Int) -> Int {
-  return a + b
+  a + b
 }
 
 fn classify(n: Int) -> Str {
@@ -18,7 +19,7 @@ fn classify(n: Int) -> Str {
   } else if n <= -5 {
     return "small"
   }
-  return "mid"
+  "mid"
 }
 
 fn main() {
@@ -36,6 +37,7 @@ fn main() {
     println(total)
     println(p.x)
     println(classify(total))
+    println(name.len())
   } else {
     println("empty")
   }

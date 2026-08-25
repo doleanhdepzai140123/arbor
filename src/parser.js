@@ -644,6 +644,13 @@ export function parse(src, file = '<input>') {
   return new Parser(toks, file, knownStructs).parseProgram();
 }
 
+// Like parse(), but with an externally supplied set of known struct names
+// so that struct literals of IMPORTED types parse correctly.
+export function parseWithKnownStructs(src, file, knownStructs) {
+  const toks = tokenize(src, file);
+  return new Parser(toks, file, knownStructs).parseProgram();
+}
+
 export function parseInterp(exprSrc, file, baseOffset) {
   const pad = ' '.repeat(baseOffset);
   const src = pad + exprSrc;

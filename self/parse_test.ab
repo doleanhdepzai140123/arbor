@@ -1,0 +1,36 @@
+// parse_test.ab — smoke test for the self-hosted parser (VM only).
+use "./parser.ab"
+
+fn dump(n: in Node, depth: Int) {
+  var pad = ""
+  var i = 0
+  while i < depth {
+    pad += "  "
+    i += 1
+  }
+  var extra = ""
+  if n.s1 != "" {
+    extra += " s1={n.s1}"
+  }
+  if n.s2 != "" {
+    extra += " s2={n.s2}"
+  }
+  println(pad + n.tag + extra)
+  var j = 0
+  while j < n.kids.len() {
+    let k = n.kids.get(j).unwrap()
+    dump(k, depth + 1)
+    j += 1
+  }
+}
+
+fn main() {
+  let src = std.fs.read_file("self/parse_probe.ab").unwrap()
+  let prog = parse_program(src)
+  println("parsed ok, decls:")
+  for d in prog.kids {
+    println("  decl {d.tag} {d.s1}")
+  }
+  let fns = prog.kids.get(0).unwrap()
+  dump(fns, 0)
+}

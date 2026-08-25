@@ -1,0 +1,41 @@
+struct Pt {
+  x: Int
+  y: Int
+}
+
+fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+
+fn scale(p: inout Pt, f: Int) {
+  p.x *= f
+  p.y *= f
+}
+
+fn describe(n: Int) -> Str {
+  if n > 10 {
+    return "big"
+  } else if n > 5 {
+    return "mid"
+  }
+  "small"
+}
+
+fn main() {
+  let msg = "sum = {1 + 2}!"
+  println(msg)
+  let xs = [3, 1, 4]
+  var total = 0
+  for x in xs {
+    total += x
+  }
+  var p = Pt { x: 2, y: 5 }
+  scale(p, 3)
+  let ratio = 0.5
+  if total >= 8 and not (ratio > 1.0) {
+    println(describe(total))
+  } else {
+    println("nope")
+  }
+  println(p.x + p.y)
+}

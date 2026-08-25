@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.4.0 — Full self-hosting (Thompson bootstrap)
+
+### The compiler is now written in ARBOR
+`self/arborsc.ab` is a complete ARBOR→C# compiler written in ARBOR itself —
+lexer, parser, semantic pass and code generator (~1,900 lines of ARBOR across
+five files). The bootstrap chain, verified by `tests/bootstrap.mjs`:
+
+1. **Seed** — the reference toolchain compiles `arborsc.ab` into a native
+   `arborsc_seed.exe`.
+2. **Self** — the seed re-compiles the compiler's own source; output C# is
+   byte-for-byte deterministic.
+3. **Parity** — both native compilers compile programs whose executables
+   match the reference VM's output exactly.
+
+This is the same fixed-point property Rust and Go reached: from here on,
+the reference VM only needs to build the seed once; every later compiler
+can be built by ARBOR itself.
+
+### Components (all written in ARBOR)
+- `self/self_lexer.ab` — lexer (token-parity with the reference lexer)
+- `self/parser.ab` — recursive-descent parser to a tagged-tree IR:
+  functions/methods/structs/enums, let/var, assignment & op-assignment,
+  if/else (statement *and* expression position), while, for-in,
+  break/continue, match statements, string interpolation desugared to
+  concatenation, array & struct literals
+- `self/checker.ab` — semantic pass v0: symbol tables, arity checks,
+  scope/name resolution, enum variant ctors, duplicate detection
+  (full ownership analysis remains in the reference checker)
+- `self/emit.ab` — C# generator with a self-contained runtime prelude
+  (boxed-object value model, arrays/structs/enums/options, string methods,
+  file I/O, args)
+- `self/arborsc.ab` — driver: import discovery, per-file parsing with
+  flat namespace merging, pipeline orchestration
+
+### Reference toolchain fixes surfaced by bootstrapping
+- `src/loader.js`: struct literals of imported types failed to parse
+  (`knownStructs` was per-file); loader now unions struct names across all
+  files before parsing.
+- `src/interp.js`: ordered string comparison (`< <= > >=`) implemented in
+  the VM to match checker + back end.
+
+### Known limitations of the self-hosted compiler (v0.4)
+- Semantic pass does not perform move/borrow analysis yet — the reference
+  checker stays authoritative there.
+- Match is statement-position only, without payload binding values.
+- No closures/tuples/ranges/maps in the emitted subset.
+
 ## v0.3.0 — Self-hosting milestone
 
 ### ARBOR compiles ARBOR

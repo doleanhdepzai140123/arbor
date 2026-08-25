@@ -1,0 +1,567 @@
+// checker.ab — semantic pass v0 for the self-hosted compiler.
+// Validates: duplicate definitions, unknown functions/arity, undeclared
+// variables, method-name whitelist, enum variant ctor arity, match shape,
+// and call argument counts. Full ownership analysis intentionally remains
+// in the reference checker (src/checker.js); this pass keeps the bootstrap
+// compiler honest about names and shapes without reimplementing move logic.
+
+use "./parser.ab"
+
+struct FnSig {
+  nm: Str
+  arity: Int
+}
+
+struct StDef {
+  nm: Str
+  nfields: Int
+}
+
+struct EnDef {
+  nm: Str
+  vnames: [Str]
+  vcounts: [Int]
+}
+
+struct Ck {
+  fns: [FnSig]
+  sts: [StDef]
+  ens: [EnDef]
+  meths: [FnSig]
+  errs: Int
+}
+
+struct Scp {
+  names: [Str]
+}
+
+// ---------- scope stack helpers ----------
+
+fn sc_push(st: inout [Scp]) {
+  var s = Scp { names: [] }
+  st.push(s)
+}
+
+fn sc_pop(st: inout [Scp]) {
+  drop(st.pop())
+}
+
+fn sc_declare(st: inout [Scp], nm: Str) {
+  var top = st.get(st.len() - 1).unwrap()
+  top.names.push(nm)
+}
+
+fn sc_has(st: in [Scp], nm: Str) -> Bool {
+  var i = st.len()
+  while i > 0 {
+    i -= 1
+    let fr = st.get(i).unwrap()
+    var j = 0
+    while j < fr.names.len() {
+      if fr.names.get(j).unwrap() == nm {
+        return true
+      }
+      j += 1
+    }
+  }
+  false
+}
+
+fn sc_dup_top(st: in [Scp], nm: Str) -> Bool {
+  let top = st.get(st.len() - 1).unwrap()
+  var j = 0
+  while j < top.names.len() {
+    if top.names.get(j).unwrap() == nm {
+      return true
+    }
+    j += 1
+  }
+  false
+}
+
+// ---------- builtin tables ----------
+
+fn is_builtin_fn(nm: Str) -> Bool {
+  if nm == "println" or nm == "print" { return true }
+  if nm == "assert" or nm == "assert_eq" { return true }
+  if nm == "drop" { return true }
+  false
+}
+
+fn builtin_fn_arity(nm: Str) -> Int {
+  if nm == "assert_eq" { return 2 }
+  1
+}
+
+fn is_builtin_method(nm: Str) -> Bool {
+  if nm == "len" or nm == "push" or nm == "pop" or nm == "get" { return true }
+  if nm == "set" or nm == "take" or nm == "clone" or nm == "contains" { return true }
+  if nm == "is_empty" or nm == "reverse" or nm == "join" { return true }
+  if nm == "split" or nm == "trim" or nm == "upper" or nm == "lower" { return true }
+  if nm == "chars" or nm == "repeat" or nm == "to_str" or nm == "to_int" { return true }
+  if nm == "starts_with" or nm == "ends_with" or nm == "replace" { return true }
+  if nm == "unwrap" or nm == "expect" or nm == "is_ok" or nm == "is_err" { return true }
+  if nm == "is_some" or nm == "is_none" or nm == "unwrap_or" { return true }
+  false
+}
+
+// ---------- collection pass ----------
+
+fn ck_err(c: inout Ck, msg: Str) {
+  println("check error: {msg}")
+  c.errs += 1
+}
+
+fn ck_collect(c: inout Ck, prog: in Node) {
+  var gi = 0
+  while gi < prog.kids.len() {
+    let g = prog.kids.get(gi).unwrap()
+    var stem = ""
+    if g.tag == "filescope" {
+      stem = g.s1
+    }
+    var src_decls = g
+    var i = 0
+    while i < src_decls.kids.len() {
+      let d = src_decls.kids.get(i).unwrap()
+      if d.tag == "fndef" {
+        if d.s1.contains("__") {
+          c.meths.push(FnSig { nm: d.s1, arity: d.kids.len() - 1 })
+        } else {
+          c.fns.push(FnSig { nm: d.s1, arity: d.kids.len() - 1 })
+          if stem != "" {
+            c.fns.push(FnSig { nm: "{stem}__{d.s1}", arity: d.kids.len() - 1 })
+          }
+        }
+      } else if d.tag == "structdef" {
+        c.sts.push(StDef { nm: d.s1, nfields: d.kids.len() })
+      } else if d.tag == "enumdef" {
+        var vn: [Str] = []
+        var vc: [Int] = []
+        var vi = 0
+        while vi < d.kids.len() {
+          let v = d.kids.get(vi).unwrap()
+          vn.push(v.s1)
+          vc.push(to_i(v.s2))
+          vi += 1
+        }
+        c.ens.push(EnDef { nm: d.s1, vnames: vn, vcounts: vc })
+      }
+      i += 1
+    }
+    gi += 1
+  }
+}
+
+fn to_i(s: Str) -> Int {
+  let r = s.to_int()
+  if r.is_ok() {
+    return r.unwrap()
+  }
+  0
+}
+
+fn ck_find_fn(c: in Ck, nm: Str) -> Int {
+  var i = 0
+  while i < c.fns.len() {
+    let f = c.fns.get(i).unwrap()
+    if f.nm == nm {
+      return f.arity
+    }
+    i += 1
+  }
+  -1
+}
+
+fn ck_find_meth(c: in Ck, nm: Str) -> Int {
+  var i = 0
+  while i < c.meths.len() {
+    let f = c.meths.get(i).unwrap()
+    if f.nm == nm {
+      return f.arity
+    }
+    i += 1
+  }
+  -1
+}
+
+fn ck_variant_arity(c: in Ck, ename: Str, vname: Str) -> Int {
+  var i = 0
+  while i < c.ens.len() {
+    let e = c.ens.get(i).unwrap()
+    if e.nm == ename {
+      var j = 0
+      while j < e.vnames.len() {
+        if e.vnames.get(j).unwrap() == vname {
+          return e.vcounts.get(j).unwrap()
+        }
+        j += 1
+      }
+    }
+    i += 1
+  }
+  -1
+}
+
+// ---------- expression checking ----------
+
+fn ck_expr(c: inout Ck, e: in Node, st: inout [Scp]) {
+  if e.tag == "int" or e.tag == "float" or e.tag == "str" or e.tag == "bool" {
+    return
+  }
+  if e.tag == "ident" {
+    let nm = e.s1
+    if not sc_has(st, nm) {
+      // bare identifiers may also name structs/enums used as qualifiers —
+      // those appear inside call nodes, so a standalone ident must be a var
+      if not ck_qualifier_ok(nm) {
+        ck_err(c, "unknown variable '{nm}' (line {e.line})")
+      }
+    }
+    return
+  }
+  if e.tag == "call" {
+    ck_call(c, e, st)
+    return
+  }
+  if e.tag == "method" {
+    // receiver computed expression + method name
+    let recv = e.kids.get(0).unwrap()
+    ck_expr(c, recv, st)
+    if not is_builtin_method(e.s1) {
+      ck_err(c, "unknown method '.{e.s1}()' (line {e.line})")
+    }
+    return
+  }
+  if e.tag == "fieldget" {
+    let recv = e.kids.get(0).unwrap()
+    ck_expr(c, recv, st)
+    return
+  }
+  if e.tag == "index" {
+    let obj = e.kids.get(0).unwrap()
+    let idx = e.kids.get(1).unwrap()
+    ck_expr(c, obj, st)
+    ck_expr(c, idx, st)
+    return
+  }
+  if e.tag == "binop" {
+    let l = e.kids.get(0).unwrap()
+    let rr = e.kids.get(1).unwrap()
+    ck_expr(c, l, st)
+    ck_expr(c, rr, st)
+    return
+  }
+  if e.tag == "unop" {
+    let operand = e.kids.get(0).unwrap()
+    ck_expr(c, operand, st)
+    return
+  }
+  if e.tag == "arrlit" {
+    var i = 0
+    while i < e.kids.len() {
+      let item = e.kids.get(i).unwrap()
+      ck_expr(c, item, st)
+      i += 1
+    }
+    return
+  }
+  if e.tag == "structlit" {
+    var i = 0
+    while i < e.kids.len() {
+      let fv = e.kids.get(i).unwrap()
+      let v = fv.kids.get(0).unwrap()
+      ck_expr(c, v, st)
+      i += 1
+    }
+    return
+  }
+  if e.tag == "interp" {
+    let inner = e.kids.get(0).unwrap()
+    ck_expr(c, inner, st)
+    return
+  }
+  if e.tag == "if" {
+    // if-expression: cond checked as expression, arms as blocks
+    let cond = e.kids.get(0).unwrap()
+    ck_expr(c, cond, st)
+    sc_push(st)
+    let thenb = e.kids.get(1).unwrap()
+    ck_block(c, thenb, st)
+    sc_pop(st)
+    if e.kids.len() > 2 {
+      let els = e.kids.get(2).unwrap()
+      sc_push(st)
+      if els.tag == "block" {
+        ck_block(c, els, st)
+      } else {
+        ck_stmt(c, els, st)
+      }
+      sc_pop(st)
+    }
+    return
+  }
+  if e.tag == "match" {
+    ck_err(c, "match is only supported as a statement (line {e.line})")
+    return
+  }
+  ck_err(c, "unsupported expression '{e.tag}' (line {e.line})")
+}
+
+// qualifiers like enum/struct names may appear bare inside qualified calls
+fn ck_qualifier_ok(nm: Str) -> Bool {
+  if nm == "Option" or nm == "Result" { return true }
+  false
+}
+
+fn ck_call(c: inout Ck, e: in Node, st: inout [Scp]) {
+  let recv = e.kids.get(0).unwrap()
+  let nargs = e.kids.len() - 1
+  if e.s1 == "" {
+    // direct call: kids[0] is the callee identifier
+    let nm = recv.s1
+    var arity = ck_find_fn(c, nm)
+    if arity < 0 {
+      if is_builtin_fn(nm) {
+        arity = builtin_fn_arity(nm)
+      }
+    }
+    if arity < 0 {
+      ck_err(c, "unknown function '{nm}' (line {e.line})")
+      return
+    }
+    if arity != nargs {
+      ck_err(c, "'{nm}' expects {arity} arg(s), got {nargs} (line {e.line})")
+    }
+    return
+  }
+  // qualified: Qual.name(args...)
+  let qual = recv.s1
+  if recv.tag != "ident" {
+    // std.* module routing: std.fs.read_file / std.env.args / std.process.exit
+    if recv.tag == "fieldget" {
+      let base = recv.kids.get(0).unwrap()
+      if base.tag == "ident" and base.s1 == "std" {
+        let mod_ = recv.s1
+        if mod_ == "fs" and (e.s1 == "read_file" or e.s1 == "write_file") {
+          return
+        }
+        if mod_ == "env" and e.s1 == "args" {
+          return
+        }
+        if mod_ == "process" and e.s1 == "exit" {
+          return
+        }
+        if mod_ == "io" {
+          return
+        }
+      }
+    }
+    // method call on computed receiver
+    ck_expr(c, recv, st)
+    if not is_builtin_method(e.s1) {
+      ck_err(c, "unknown method '.{e.s1}()' (line {e.line})")
+    }
+    return
+  }
+  if sc_has(st, qual) {
+    // method call on a local variable
+    if is_builtin_method(e.s1) {
+      return
+    }
+    ck_err(c, "unknown method '.{e.s1}()' on '{qual}' (line {e.line})")
+    return
+  }
+  // enum variant constructor?
+  let va = ck_variant_arity(c, qual, e.s1)
+  if va >= 0 {
+    if va != nargs {
+      ck_err(c, "'{qual}.{e.s1}' expects {va} payload(s), got {nargs} (line {e.line})")
+    }
+    return
+  }
+    if qual == "Option" or qual == "Result" {
+      return
+    }
+    // module-qualified call of an existing function (flat namespace)
+    if ck_find_fn(c, e.s1) >= 0 {
+      return
+    }
+    ck_err(c, "unknown qualifier '{qual}' for '{e.s1}' (line {e.line})")
+}
+
+// ---------- statement checking ----------
+
+fn ck_stmt(c: inout Ck, s: in Node, st: inout [Scp]) {
+  if s.tag == "let" or s.tag == "var" {
+    let init = s.kids.get(0).unwrap()
+    ck_expr(c, init, st)
+    if sc_dup_top(st, s.s1) {
+      ck_err(c, "duplicate variable '{s.s1}' in scope (line {s.line})")
+    }
+    sc_declare(st, s.s1)
+    return
+  }
+  if s.tag == "assign" or s.tag == "opassign" {
+    let target = s.kids.get(0).unwrap()
+    let rhs = s.kids.get(1).unwrap()
+    if target.tag == "ident" {
+      if not sc_has(st, target.s1) {
+        ck_err(c, "assignment to unknown variable '{target.s1}' (line {s.line})")
+      }
+    } else if target.tag == "fieldget" {
+      let recv = target.kids.get(0).unwrap()
+      ck_expr(c, recv, st)
+    } else if target.tag == "index" {
+      let obj = target.kids.get(0).unwrap()
+      let idx = target.kids.get(1).unwrap()
+      ck_expr(c, obj, st)
+      ck_expr(c, idx, st)
+    } else {
+      ck_err(c, "invalid assignment target (line {s.line})")
+    }
+    ck_expr(c, rhs, st)
+    return
+  }
+  if s.tag == "exprstmt" {
+    let e = s.kids.get(0).unwrap()
+    ck_expr(c, e, st)
+    return
+  }
+  if s.tag == "return" {
+    if s.kids.len() > 0 {
+      let e = s.kids.get(0).unwrap()
+      ck_expr(c, e, st)
+    }
+    return
+  }
+  if s.tag == "break" or s.tag == "cont" {
+    return
+  }
+  if s.tag == "if" {
+    let cond = s.kids.get(0).unwrap()
+    ck_expr(c, cond, st)
+    sc_push(st)
+    let thenb = s.kids.get(1).unwrap()
+    ck_block(c, thenb, st)
+    sc_pop(st)
+    if s.kids.len() > 2 {
+      let els = s.kids.get(2).unwrap()
+      sc_push(st)
+      if els.tag == "block" {
+        ck_block(c, els, st)
+      } else {
+        ck_stmt(c, els, st)
+      }
+      sc_pop(st)
+    }
+    return
+  }
+  if s.tag == "while" {
+    let cond = s.kids.get(0).unwrap()
+    ck_expr(c, cond, st)
+    sc_push(st)
+    let body = s.kids.get(1).unwrap()
+    ck_block(c, body, st)
+    sc_pop(st)
+    return
+  }
+  if s.tag == "forin" {
+    let iter = s.kids.get(0).unwrap()
+    ck_expr(c, iter, st)
+    sc_push(st)
+    sc_declare(st, s.s1)
+    let body = s.kids.get(1).unwrap()
+    ck_block(c, body, st)
+    sc_pop(st)
+    return
+  }
+  if s.tag == "match" {
+    let subj = s.kids.get(0).unwrap()
+    let subject = subj.kids.get(0).unwrap()
+    ck_expr(c, subject, st)
+    sc_push(st)
+    var ai = 1
+    while ai < s.kids.len() {
+      let arm = s.kids.get(ai).unwrap()
+      var bi = 0
+      while bi < arm.kids.len() - 1 {
+        let bnd = arm.kids.get(bi).unwrap()
+        sc_declare(st, bnd.s1)
+        bi += 1
+      }
+      let body = arm.kids.get(arm.kids.len() - 1).unwrap()
+      ck_block(c, body, st)
+      ai += 1
+    }
+    sc_pop(st)
+    return
+  }
+  ck_err(c, "unsupported statement '{s.tag}' (line {s.line})")
+}
+
+fn ck_block(c: inout Ck, b: in Node, st: inout [Scp]) {
+  var i = 0
+  while i < b.kids.len() {
+    let s = b.kids.get(i).unwrap()
+    ck_stmt(c, s, st)
+    i += 1
+  }
+}
+
+fn ck_fn(c: inout Ck, f: in Node, st: inout [Scp]) {
+  sc_push(st)
+  var pi = 0
+  while pi < f.kids.len() - 1 {
+    let prm = f.kids.get(pi).unwrap()
+    sc_declare(st, prm.s1)
+    pi += 1
+  }
+  let body = f.kids.get(f.kids.len() - 1).unwrap()
+  ck_block(c, body, st)
+  sc_pop(st)
+}
+
+// entry: returns error count (also printed)
+fn check_program(prog: in Node) -> Int {
+  var c = Ck { fns: [], sts: [], ens: [], meths: [], errs: 0 }
+  ck_collect(c, prog)
+  // duplicate definition scan (aliases carry "__" and are exempt;
+  // genuine user methods live in c.meths, not c.fns)
+  var i = 0
+  while i < c.fns.len() {
+    let a = c.fns.get(i).unwrap()
+    if a.nm.contains("__") {
+      i += 1
+      continue
+    }
+    var j = i + 1
+    while j < c.fns.len() {
+      let bb = c.fns.get(j).unwrap()
+      if bb.nm == a.nm {
+        ck_err(c, "duplicate definition '{a.nm}'")
+      }
+      j += 1
+    }
+    i += 1
+  }
+  var st: [Scp] = []
+  var di = 0
+  while di < prog.kids.len() {
+    let g = prog.kids.get(di).unwrap()
+    if g.tag == "filescope" {
+      var fi = 0
+      while fi < g.kids.len() {
+        let d = g.kids.get(fi).unwrap()
+        if d.tag == "fndef" {
+          ck_fn(c, d, st)
+        }
+        fi += 1
+      }
+    } else if g.tag == "fndef" {
+      ck_fn(c, g, st)
+    }
+    di += 1
+  }
+  c.errs
+}

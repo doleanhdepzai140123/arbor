@@ -1,0 +1,261 @@
+// arborsc.ab — the ARBOR compiler, written in ARBOR.
+//
+// Pipeline: read entry file -> discover `use "./x.ab"` imports (BFS) ->
+// concatenate sources -> parse to Node IR (parser.ab) -> flatten module
+// qualifiers (math.add -> math__add) -> semantic pass (checker.ab) ->
+// emit C# (emit.ab) -> write output file.
+//
+// Usage:  arborsc <input.ab> [-o <output.cs>]
+// The seed build is produced by the reference toolchain:
+//   arbor build self/arborsc.ab -o arborsc.exe
+// after which arborsc.exe can compile ARBOR programs — including its
+// own source — with no JavaScript involved at run time.
+
+use "./self_lexer.ab"
+use "./parser.ab"
+use "./checker.ab"
+use "./emit.ab"
+
+struct Src {
+  path: Str
+  text: Str
+}
+
+fn dir_of(p: Str) -> Str {
+  var cut = -1
+  let cs = p.chars()
+  var i = 0
+  while i < cs.len() {
+    if cs.get(i).unwrap() == "/" {
+      cut = i
+    }
+    i += 1
+  }
+  if cut < 0 {
+    return ""
+  }
+  slice_to(p, cut)
+}
+
+fn slice_to(s: Str, n: Int) -> Str {
+  var out = ""
+  let cs = s.chars()
+  var i = 0
+  while i < n and i < cs.len() {
+    out += cs.get(i).unwrap()
+    i += 1
+  }
+  out
+}
+
+fn basename_of(p: Str) -> Str {
+  var cut = -1
+  let cs = p.chars()
+  var i = 0
+  while i < cs.len() {
+    if cs.get(i).unwrap() == "/" {
+      cut = i
+    }
+    i += 1
+  }
+  slice_from(p, cut + 1)
+}
+
+fn slice_from(s: Str, start: Int) -> Str {
+  var out = ""
+  let cs = s.chars()
+  var i = start
+  while i < cs.len() {
+    out += cs.get(i).unwrap()
+    i += 1
+  }
+  out
+}
+
+fn stem_of(p: Str) -> Str {
+  var b = basename_of(p)
+  if ends_with_str(b, ".ab") {
+    b = slice_to(b, b.len() - 3)
+  }
+  b
+}
+
+fn ends_with_str(s: Str, suf: Str) -> Bool {
+  if suf.len() > s.len() {
+    return false
+  }
+  slice_from(s, s.len() - suf.len()) == suf
+}
+
+// extract quoted paths from lines beginning with `use "`
+fn scan_uses(text: Str) -> [Str] {
+  var found: [Str] = []
+  let lines = text.split("\n")
+  for ln in lines {
+    let t = ln.trim()
+    if starts_with_str(t, "use ") and t.contains("\"") {
+      let pieces = t.split("\"")
+      if pieces.len() >= 2 {
+        found.push(pieces.get(1).unwrap().trim())
+      }
+    }
+  }
+  found
+}
+
+fn starts_with_str(s: Str, pre: Str) -> Bool {
+  if pre.len() > s.len() {
+    return false
+  }
+  slice_to(s, pre.len()) == pre
+}
+
+fn join_path(dir: Str, rel: Str) -> Str {
+  if dir.len() == 0 {
+    return rel
+  }
+  "{dir}/{rel}"
+}
+
+fn already_in(paths: in [Str], p: Str) -> Bool {
+  for q in paths {
+    if q == p {
+      return true
+    }
+  }
+  false
+}
+
+fn norm_path(p: Str) -> Str {
+  var out = p
+  while out.contains("/./") {
+    out = out.replace("/./", "/")
+  }
+  while out.contains("//") {
+    out = out.replace("//", "/")
+  }
+  out
+}
+
+// BFS over use-imports; returns loaded sources in discovery order
+fn load_all(entry: Str) -> [Src] {
+  var normed = norm_path(entry.replace("\\", "/"))
+  var queue: [Str] = []
+  var seen: [Str] = []
+  var outp: [Src] = []
+  queue.push(normed)
+  seen.push(normed)
+  while queue.len() > 0 {
+    let popped = queue.pop().unwrap()
+    let path = popped
+    let r = std.fs.read_file(path)
+    if r.is_err() {
+      println("arborsc: cannot read {path}")
+      assert(1 == 2)
+    }
+    if r.is_ok() {
+      let text = r.unwrap()
+      var src = Src { path: path, text: text }
+      outp.push(src)
+      let base = dir_of(path)
+      for u in scan_uses(text) {
+        if not starts_with_str(u, "./") {
+          continue
+        }
+        let child = norm_path(join_path(base, u))
+        if not already_in(seen, child) {
+          seen.push(child)
+          queue.push(child)
+        }
+      }
+    }
+  }
+  outp
+}
+
+fn concat_sources(srcs: in [Src]) -> Str {
+  var all = ""
+  for s in srcs {
+    all += "// ==== file: {s.path} ====\n"
+    all += s.text
+    all += "\n"
+  }
+  all
+}
+
+// ---------- merging ----------
+// Each file parses independently; declarations are grouped under a
+// "filescope" wrapper whose s1 holds the module stem ("" for the entry).
+// Qualified calls like math.add(...) stay untouched: the checker accepts
+// them when an alias exists, and the emitter lowers them to a direct
+// call of the bare name (flat namespace — names must be unique across
+// files, duplicates are reported by the checker).
+
+fn merge_program(srcs: in [Src]) -> Node {
+  var groups: [Node] = []
+  var i = 0
+  while i < srcs.len() {
+    let sp = srcs.get(i).unwrap()
+    let sub = parse_program(sp.text)
+    var stem = ""
+    if i > 0 {
+      stem = stem_of(sp.path)
+    }
+    groups.push(Node { tag: "filescope", s1: stem, s2: "", line: 0, kids: sub.kids })
+    i += 1
+  }
+  Node { tag: "prog", s1: "", s2: "", line: 0, kids: groups }
+}
+
+// ---------- main ----------
+
+fn main() {
+  let argv = std.env.args()
+  if argv.len() < 1 {
+    println("usage: arborsc <input.ab> [-o <output.cs>]")
+    return
+  }
+  var input = ""
+  var output = ""
+  var ai = 0
+  while ai < argv.len() {
+    let a = argv.get(ai).unwrap()
+    if a == "-o" {
+      if ai + 1 < argv.len() {
+        output = argv.get(ai + 1).unwrap()
+      }
+      ai += 2
+    } else {
+      if input == "" {
+        input = a
+      }
+      ai += 1
+    }
+  }
+  if input == "" {
+    println("usage: arborsc <input.ab> [-o <output.cs>]")
+    return
+  }
+  if output == "" {
+    output = "a-out.cs"
+  }
+
+  let srcs = load_all(input)
+  let prog = merge_program(srcs)
+
+  let errs = check_program(prog)
+  if errs > 0 {
+    println("arborsc: {errs} error(s) in {input}")
+    assert(errs == 0)
+    return
+  }
+
+  let cs = emit_program(prog)
+  let wres = std.fs.write_file(output, cs)
+  if wres.is_err() {
+    println("arborsc: cannot write {output}")
+    assert(2 == 3)
+    return
+  }
+  println("arborsc: compiled {input} ({srcs.len()} file(s)) -> {output} ({cs.len()} chars)")
+}

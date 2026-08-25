@@ -1,87 +1,103 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { parse } from '../src/parser.js';
+import { parseWithKnownStructs } from '../src/parser.js';
+
+// Pre-scan a source text for `use "..."` file imports (text-level; the
+// import grammar only appears at line starts in practice).
+function scanUsePaths(src) {
+  const out = [];
+  for (const line of src.split(/\r?\n/)) {
+    const m = line.match(/^\s*use\s+"([^"]+)"/);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+// Collect struct names across a set of sources so struct literals of
+// imported types parse everywhere (see parser.parseWithKnownStructs).
+function collectStructNames(src, set) {
+  const re = /\bstruct\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  let m;
+  while ((m = re.exec(src)) !== null) set.add(m[1]);
+}
 
 // Loads entry file + all `use "./x.ab"` imports (recursive, cycle-safe).
-// Module functions are renamed `stem__name` and registered under a module
-// namespace so `math.add(...)` resolves to `ab_math__add` downstream.
 export function loadProgram(entryPath) {
   const abs = resolve(entryPath);
-  const modules = new Map();   // stem -> { name, decls, members: Map(member -> mangled) }
+
+  // Phase A: gather all file texts following use-imports.
+  const texts = new Map();   // absPath -> src
   const order = [];
-  const loading = new Set();
+  const loading = [];
+  function gather(absPath) {
+    if (texts.has(absPath)) return;
+    if (!existsSync(absPath)) throw new Error(`imported file not found: ${absPath}`);
+    loading.push(absPath);
+    const src = readFileSync(absPath, 'utf8');
+    texts.set(absPath, src);
+    const dir = dirname(absPath);
+    for (const rel of scanUsePaths(src)) {
+      if (rel.startsWith('./')) gather(resolve(dir, rel));
+    }
+    loading.pop();
+    order.push(absPath);
+  }
+  gather(abs);
+
+  // Phase B: union of struct names across every file.
+  const knownStructs = new Set();
+  for (const src of texts.values()) collectStructNames(src, knownStructs);
+
+  // Phase C: parse with the global struct-name set.
+  const modules = new Map();   // stem -> { name, decls, members: Map(member -> mangled) }
+  const declsByFile = new Map();
 
   function loadFile(absPath) {
     if (modules.has(absPath)) return modules.get(absPath).name;
-    if (loading.has(absPath)) throw new Error(`circular import involving ${absPath}`);
-    if (!existsSync(absPath)) throw new Error(`imported file not found: ${absPath}`);
-    loading.add(absPath);
-
-    const src = readFileSync(absPath, 'utf8');
-    const prog = parse(src, absPath);
     const stem = basename(absPath).replace(/\.ab$/, '');
     const safe = stem.replace(/[^A-Za-z0-9_]/g, '_');
     const members = new Map();
+    const prog = parseWithKnownStructs(texts.get(absPath), absPath, knownStructs);
 
-    const decls = [];
+    const fileDecls = [];
     for (const d of prog.decls) {
-      if (d.k === 'useFile') {
-        const childAbs = resolve(dirname(absPath), d.path);
-        loadFile(childAbs);
-        continue; // child decls are already in the merged program
-      }
-      if (d.k === 'use') continue; // std imports are re-emitted untouched below
+      if (d.k === 'use' || d.k === 'useFile') continue;
       if (d.k === 'fn' && !d.name.includes('.')) {
         members.set(d.name, d.name);
-        decls.push(d);
+        fileDecls.push(d);
         continue;
       }
       if (d.k === 'const') {
         members.set(d.name, d.name);
-        decls.push(d);
+        fileDecls.push(d);
         continue;
       }
       // structs/enums/methods pass through unchanged
-      decls.push(d);
+      fileDecls.push(d);
     }
-    modules.set(absPath, { name: safe, decls, members });
-    order.push(absPath);
-    loading.delete(absPath);
+    declsByFile.set(absPath, fileDecls);
+    modules.set(absPath, { name: safe, decls: fileDecls, members });
     return safe;
   }
 
-  const entrySrc = readFileSync(abs, 'utf8');
-  const entryProg = parse(entrySrc, abs);
-  const entryDir = dirname(abs);
+  for (const p of order) loadFile(p);
 
-  // collect file imports from entry (recursively from imported files too)
-  const fileImports = [];   // { path, stem }
-  const seenStems = new Set();
-  function collectFrom(prog, baseDir) {
-    for (const d of prog.decls) {
-      if (d.k !== 'useFile') continue;
-      const childAbs = resolve(baseDir, d.path);
-      const rawStem = basename(childAbs).replace(/\.ab$/, '');
-      const stem = (d.alias ?? rawStem).replace(/[^A-Za-z0-9_]/g, '_');
-      loadFile(childAbs);
-      if (!seenStems.has(stem)) { seenStems.add(stem); fileImports.push({ stem, abs: childAbs }); }
-      const childProg = parse(readFileSync(childAbs, 'utf8'), childAbs);
-      collectFrom(childProg, dirname(childAbs));
-    }
-  }
-  collectFrom(entryProg, entryDir);
-
-  // merged decls: imported module fns (renamed) + entry decls (std `use` kept)
+  // merged decls: imported module fns + entry decls
   const merged = [];
   const moduleRegistry = new Map();  // stem -> Map(member -> mangled)
-  for (const { stem, abs: childAbs } of fileImports) {
-    const mod = modules.get(childAbs);
-    moduleRegistry.set(stem, mod.members);
-    for (const d of mod.decls) merged.push(d);
+  for (const p of order.slice(0)) {
+    const mod = modules.get(p);
+    if (p !== abs) moduleRegistry.set(mod.name, mod.members);
   }
+  // imported files first (dependency order), entry last
+  for (const p of order) {
+    if (p === abs) continue;
+    for (const d of modules.get(p).decls) merged.push(d);
+  }
+  const entryProg = parseWithKnownStructs(texts.get(abs), abs, knownStructs);
   for (const d of entryProg.decls) merged.push(d);
 
-  return { decls: merged, modules: moduleRegistry, entryDir, entryAbs: abs };
+  return { decls: merged, modules: moduleRegistry, entryDir: dirname(abs), entryAbs: abs, entryProg };
 }
 
 function basename(p) { return p.split(/[\\/]/).pop(); }

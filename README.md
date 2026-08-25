@@ -1,4 +1,4 @@
-# ARBOR v0.3.0
+# ARBOR v0.4.0
 
 <p align="center"><img src="docs/logo_green_no_background.png" alt="ARBOR" width="280"></p>
 
@@ -39,9 +39,10 @@ npm test                                     # 25 conformance + 12 native parity
 
 # Self-hosting — ARBOR compiles ARBOR:
 node bin\arbor.js run self\self_analysis.ab  # ARBOR tokenizes its own lexer's source
-node bin\arbor.js run self\test_transpile.ab # ARBOR transpiler (written in ARBOR) -> C#
-csc /nologo /t:exe /out:hello2.exe output.cs # compile the transpiled output...
-.\hello2.exe                                 # ...and run it: "hello from self-hosted ARBOR!"
+npm run test:bootstrap                       # the Thompson check:
+                                             #   seed -> arborsc.exe (native, written in ARBOR)
+                                             #   arborsc.exe compiles ITSELF -> identical behavior
+                                             #   programs it compiles match the reference VM exactly
 node tests\self_hosted.mjs                   # self-hosted lexer == reference lexer, VM & native
 ```
 
@@ -112,10 +113,12 @@ src/compiler/
   runtime_native.js     Hand-emitted assembly runtime (in progress)
   c_backend.js          ARBOR → C11 generator (experimental)
 
-self/                   ARBOR written in ARBOR (self-hosting)
+self/                   ARBOR written in ARBOR (full self-hosting)
   self_lexer.ab         Lexer — token-for-token parity with src/lexer.js, VM & native
-  self_parser.ab        Recursive-descent parser emitting C# directly
-  transpiler.ab         ARBOR → C# line-level transpiler (bootstrap loop)
+  parser.ab             Parser: source -> tagged-tree IR (Node)
+  checker.ab            Semantic pass v0: scopes, arity, name resolution
+  emit.ab               C# code generator + self-contained runtime prelude
+  arborsc.ab            THE COMPILER — driver for the whole pipeline
   lexdump.ab            Token dump driver used by tests/self_hosted.mjs
 ```
 
@@ -129,13 +132,10 @@ self/                   ARBOR written in ARBOR (self-hosting)
 
 ## Status
 
-v0.3 ships a complete front end (lexer/parser/checker), a reference interpreter
-with exact deterministic semantics, a 25-test conformance suite, a **working
-native compiler** (`arbor build` → standalone .exe via the C# back end, 12/12
-compiled-vs-VM parity), project tooling, and the first **self-hosting
-milestone**: an ARBOR lexer, parser and transpiler written in ARBOR itself,
-with token-for-token parity against the reference implementation in both VM
-and natively compiled form. The self-contained x86-64 pipeline (encoder + PE
-writer + hand-emitted assembly runtime) continues in parallel — see
-[docs/COMPILER.md](docs/COMPILER.md) for the precise architecture and
-[docs/ROADMAP.md](docs/ROADMAP.md) for where the language goes next.
+v0.4 reaches **full self-hosting** — the Thompson fixed point. The compiler
+(`self/arborsc.ab`) is written in ARBOR: the seed toolchain builds it once,
+then it rebuilds itself deterministically and compiles programs whose output
+matches the reference VM byte-for-byte (`npm run test:bootstrap`). Alongside
+it ship the complete front end, reference interpreter, native compiler
+(`arbor build`, 12/12 parity), 25 conformance cases and the lexer-parity
+suite. See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.

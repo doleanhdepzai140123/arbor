@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.4.1 — Match v2, closures verified, and `arborc`
+
+### Match everywhere (VM + native, identical output)
+- `match` now works in **expression position** (as function tail, `let`
+  initializer, call argument) — the C# back end previously discarded the
+  value of a tail match.
+- **Guards**: `Pattern if cond => body` — a failing guard leaves the arm
+  unmatched for later arms; bindings are available to the guard.
+- Variant patterns bind payloads (`Circle(r) => ...`) and literal payload
+  patterns match (`Circle(0) => ...`).
+- Zero-payload variants usable as plain values: `Shape.Point`.
+- Fixed: enum constructors `Shape.Circle(4)` compiled to UNIT natively.
+
+### Plain indexing fixed on native
+`xs[i]` yields the element directly with R0002/R0008 traps (was wrongly
+Option-wrapped, breaking `.field` chains). `.get(i)` remains the Option form.
+
+### Closures — verified full stack
+Anonymous `fn` literals, `fn(T...) -> R` types, higher-order functions and
+variable capture work identically in the VM and natively.
+
+### `std.process.exec(cmd, args) -> Result[Str]`
+Run external processes from ARBOR (VM + native).
+
+### `arborc` — the compiler as a product
+- `npm run build:arborc` produces **arborc.exe**: a standalone native ARBOR
+  compiler written in ARBOR (self-hosted, no Node at run time).
+- `arborc <input.ab> -o <out.exe> -exe` compiles straight to an executable;
+  `-csc <path>` overrides the C# compiler. `arborc.cmd` shim included.
+- Known limitation: the *reference* back end cannot yet compile arborsc's
+  own source (typed-field operators); the canonical bootstrap path is the
+  self-emitted pipeline (`npm run build:arborc`), which is fully verified.
+
 ## v0.4.0 — Full self-hosting (Thompson bootstrap)
 
 ### The compiler is now written in ARBOR

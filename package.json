@@ -13,6 +13,7 @@
     "test:native": "node tests/native_parity.mjs",
     "test:selfhost": "node tests/self_hosted.mjs",
     "test:bootstrap": "node tests/bootstrap.mjs",
+    "build:arborc": "node scripts/build_arborc.mjs",
     "bench": "node tests/bench.mjs",
     "repl": "node bin/arbor.js repl"
   },

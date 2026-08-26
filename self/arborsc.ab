@@ -1,15 +1,19 @@
 // arborsc.ab — the ARBOR compiler, written in ARBOR.
 //
-// Pipeline: read entry file -> discover `use "./x.ab"` imports (BFS) ->
-// concatenate sources -> parse to Node IR (parser.ab) -> flatten module
-// qualifiers (math.add -> math__add) -> semantic pass (checker.ab) ->
-// emit C# (emit.ab) -> write output file.
+// Pipeline: read entry file -> discover `use "./x.ab"` imports (DFS) ->
+// parse each file to Node IR (parser.ab) -> merge under filescope groups ->
+// semantic pass (checker.ab) -> emit C# (emit.ab) -> write output.
 //
-// Usage:  arborsc <input.ab> [-o <output.cs>]
+// Usage:
+//   arborsc <input.ab> [-o <out.cs>]
+//   arborsc <input.ab> -o <out.exe> -exe      compile all the way to a
+//                                             native executable (invokes
+//                                             csc via std.process.exec)
+//
 // The seed build is produced by the reference toolchain:
-//   arbor build self/arborsc.ab -o arborsc.exe
-// after which arborsc.exe can compile ARBOR programs — including its
-// own source — with no JavaScript involved at run time.
+//   arbor build self/arborsc.ab -o arborc.exe
+// after which arborc.exe compiles ARBOR programs — including its own
+// source — with no JavaScript involved at run time.
 
 use "./self_lexer.ab"
 use "./parser.ab"
@@ -212,17 +216,27 @@ fn merge_program(srcs: in [Src]) -> Node {
 fn main() {
   let argv = std.env.args()
   if argv.len() < 1 {
-    println("usage: arborsc <input.ab> [-o <output.cs>]")
+    println("usage: arborc <input.ab> [-o <out.cs>] [-exe] [-csc <path>]")
     return
   }
   var input = ""
   var output = ""
+  var csc_path = "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+  var want_exe = false
   var ai = 0
   while ai < argv.len() {
     let a = argv.get(ai).unwrap()
     if a == "-o" {
       if ai + 1 < argv.len() {
         output = argv.get(ai + 1).unwrap()
+      }
+      ai += 2
+    } else if a == "-exe" {
+      want_exe = true
+      ai += 1
+    } else if a == "-csc" {
+      if ai + 1 < argv.len() {
+        csc_path = argv.get(ai + 1).unwrap()
       }
       ai += 2
     } else {
@@ -233,11 +247,18 @@ fn main() {
     }
   }
   if input == "" {
-    println("usage: arborsc <input.ab> [-o <output.cs>]")
+    println("usage: arborc <input.ab> [-o <out.cs>] [-exe] [-csc <path>]")
     return
   }
+  if ends_with_str(output, ".exe") {
+    want_exe = true
+  }
   if output == "" {
-    output = "a-out.cs"
+    if want_exe {
+      output = "a-out.exe"
+    } else {
+      output = "a-out.cs"
+    }
   }
 
   let srcs = load_all(input)
@@ -245,17 +266,39 @@ fn main() {
 
   let errs = check_program(prog)
   if errs > 0 {
-    println("arborsc: {errs} error(s) in {input}")
+    println("arborc: {errs} error(s) in {input}")
     assert(errs == 0)
     return
   }
 
   let cs = emit_program(prog)
-  let wres = std.fs.write_file(output, cs)
+  var cs_path = output
+  if want_exe {
+    cs_path = replace_tail(output, ".exe", ".cs")
+  }
+  let wres = std.fs.write_file(cs_path, cs)
   if wres.is_err() {
-    println("arborsc: cannot write {output}")
+    println("arborc: cannot write {cs_path}")
     assert(2 == 3)
     return
   }
-  println("arborsc: compiled {input} ({srcs.len()} file(s)) -> {output} ({cs.len()} chars)")
+  if not want_exe {
+    println("arborc: compiled {input} ({srcs.len()} file(s)) -> {cs_path} ({cs.len()} chars)")
+    return
+  }
+  let cargs = ["/nologo", "/optimize+", "/out:" + output, "/t:exe", cs_path]
+  let er = std.process.exec(csc_path, cargs)
+  if er.is_ok() {
+    println("arborc: built {output} from {input} ({srcs.len()} file(s))")
+    return
+  }
+  println("arborc: csc failed for {output}")
+  assert(3 == 4)
+}
+
+fn replace_tail(s: Str, old: Str, new: Str) -> Str {
+  if ends_with_str(s, old) {
+    return slice_to(s, s.len() - old.len()) + new
+  }
+  s + new
 }

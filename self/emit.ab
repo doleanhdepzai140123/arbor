@@ -308,6 +308,9 @@ fn emit_call(e: inout Em, n: in Node, es: inout [EmScope]) -> Str {
     if base.tag == "ident" and base.s1 == "std" and recv_node.s1 == "process" and n.s1 == "exit" {
       return "RT.Exit({alist})"
     }
+    if base.tag == "ident" and base.s1 == "std" and recv_node.s1 == "process" and n.s1 == "exec" {
+      return "RT.Exec({alist})"
+    }
   }
   let recv = emit_expr(e, recv_node, es)
   "RT.MCall({recv}, \"{n.s1}\", new object[] \{ {alist} \})"
@@ -756,6 +759,7 @@ fn rt_prelude() -> Str {
   ls.push("  public static bool VIs(object o, string vname) \{ return o is OV && ((OV)o).K == \"Enum\" && (string)((OV)o).V2 == vname; \}")
   ls.push("  public static object VPay(object o, int i) \{ ABV pl = (ABV)((OV)o).X; if (i < 0 || i >= pl.L.Count) Trap(\"variant payload missing\"); return pl.L[i]; \}")
   ls.push("  public static object ReadFile(object path) \{ try \{ return Ok(System.IO.File.ReadAllText((string)path)); \} catch (Exception e2) \{ return Err(e2.Message); \} \}")
+  ls.push("  public static object Exec(object cmd, object argv) \{ try \{ var psi = new System.Diagnostics.ProcessStartInfo(); psi.FileName = (string)cmd; psi.Arguments = \"\"; string q = ((char)34).ToString(); string bs = ((char)92).ToString(); foreach (object a in ((ABV)argv).L) \{ string s3 = (string)a; psi.Arguments += (psi.Arguments.Length == 0 ? \"\" : \" \") + q + s3.Replace(q, bs + q) + q; \} psi.UseShellExecute = false; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true; var pr2 = System.Diagnostics.Process.Start(psi); string so = pr2.StandardOutput.ReadToEnd(); pr2.WaitForExit(); if (pr2.ExitCode != 0) return Err(\"exit \" + pr2.ExitCode + \": \" + pr2.StandardError.ReadToEnd()); return Ok(so); \} catch (Exception e2) \{ return Err(e2.Message); \} \}")
   ls.push("  public static object WriteFile(object path, object data) \{ try \{ System.IO.File.WriteAllText((string)path, (string)data); return Ok((object)(long)((string)data).Length); \} catch (Exception e2) \{ return Err(e2.Message); \} \}")
   ls.push("  public static object Args() \{ ABV r = new ABV(); foreach (string s3 in Environment.GetCommandLineArgs().Skip(1)) r.L.Add(s3); return r; \}")
   ls.push("  public static object Exit(object code) \{ Environment.Exit((int)(long)code); return UNIT; \}")

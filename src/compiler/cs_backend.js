@@ -139,13 +139,14 @@ class CsGen {
       this.ind = 1;
       this.out = [];
       const last = d.body.stmts[d.body.stmts.length - 1];
-      const lastIsExpr = last && last.k === 'expr';
-      for (let i = 0; i < d.body.stmts.length - (lastIsExpr ? 1 : 0); i++) {
+      // a trailing expression, match or if produces the function's value
+      const lastIsValue = !!(last && (last.k === 'expr' || last.k === 'match' || last.k === 'if'));
+      for (let i = 0; i < d.body.stmts.length - (lastIsValue ? 1 : 0); i++) {
         this.genStmt(d.body.stmts[i]);
       }
       let tail = 'return RT.UNIT;';
-      if (lastIsExpr) {
-        const rv = this.genExpr(last.e);
+      if (lastIsValue) {
+        const rv = this.genExpr(last.k === 'expr' ? last.e : last);
         tail = this.fnRetTy
           ? `return ${this.convTo(rv, this.lastTy, this.fnRetTy)};`
           : `return ${this.boxIf(rv, this.lastTy)};`;
@@ -369,10 +370,17 @@ class CsGen {
           this.lastTy = 'string';
           return `RT.StrIdx(${o}, ${i})`;
         }
+        // plain indexing yields the element directly (bounds-checked),
+        // matching the reference VM — Option-wrapped access is `.get(i)`
         this.lastTy = null;
-        return `RT.ArrGetOpt(${o}, ${i})`;
+        return `RT.ArrGet(${o}, ${i})`;
       }
       case 'field': {
+        // zero-payload enum variant used as a value: Shape.Point
+        if (e.enumCtor) {
+          this.lastTy = null;
+          return `RT.Enum(${Cs.str(e.enumCtor.name)}, ${Cs.str(e.enumCtor.variant)}, new object[] { })`;
+        }
         const r = this.genExpr(e.obj);
         if (/^\d+$/.test(e.name)) { this.lastTy = null; return `RT.TupGet(${r}, ${e.name})`; }
         this.lastTy = e.fieldPrim ?? null;
@@ -465,7 +473,9 @@ class CsGen {
         ? `(RT.Truthy(${l0}) ? ${r0} : (object)false)`
         : `(RT.Truthy(${l0}) ? (object)true : ${r0})`;
     }
-    const numericSame = (lt === 'long' && rt === 'long') || (lt === 'double' && rt === 'double');
+    // match guards run against boxed pattern bindings — never use raw C#
+    // operators there even when the checker stamped static types
+    const numericSame = !this.forceObj && ((lt === 'long' && rt === 'long') || (lt === 'double' && rt === 'double'));
     const l = this.genExpr(e.l);
     const r = this.genExpr(e.r);
 
@@ -567,6 +577,7 @@ class CsGen {
       case 'std.fs.write_file': return `RT.WriteFile(${vals[0]}, ${vals[1]})`;
       case 'std.time.now_ms': return `RT.NowMs()`;
       case 'std.env.args': return `RT.CliArgs()`;
+      case 'std.process.exec': return `RT.Exec(${vals[0]}, ${vals[1]})`;
       case 'std.mem.live': return `RT.MemLive()`;
       case 'std.mem.allocs': return `RT.MemAllocs()`;
       default: return `RT.UNIT`;
@@ -596,6 +607,13 @@ class CsGen {
 
   genMethodCase(e) {
     if (e.bifPath) return this.genBif(e);
+    // qualified enum-variant constructor: Shape.Circle(4), Point-style via type name
+    if (e.userVariant || e.enumCtor) {
+      const info = e.userVariant ?? e.enumCtor;
+      const args = (e.args ?? []).map(a => this.genExpr(a));
+      this.lastTy = null;
+      return `RT.Enum(${Cs.str(info.name)}, ${Cs.str(info.variant)}, new object[] { ${args.join(', ')} })`;
+    }
     if (e.moduleFn) {
       const decl = e.moduleFn.decl;
       const mangled = 'ab_' + decl.name;
@@ -796,14 +814,31 @@ class CsGen {
       const conds = [];
       const binds = [];
       this.patternCond(arm.pattern, sV, conds, binds, st);
-      if (arm.guard) conds.push(`(${this.truthy(this.genExpr(arm.guard))})`);
       const cond = conds.length ? conds.join(' && ') : `(!${dV})`;
       this.w(`if (!${dV} && (${cond}))`);
       this.w(`{`);
       this.ind++;
-      this.w(`${dV} = true;`);
+      // bind pattern variables first so guards can reference them
       for (const b of binds) this.w(b);
-      this.genArmBody(arm, v);
+      // pattern bindings are runtime objects even when the checker knows
+      // their static types — emit the whole arm in RT-helper domain
+      const savedForce = this.forceObj;
+      this.forceObj = true;
+      if (arm.guard) {
+        // a failing guard must leave the arm unmatched for later arms
+        const g = this.genExpr(arm.guard);
+        this.w(`if (${this.truthy(g)})`);
+        this.w(`{`);
+        this.ind++;
+        this.w(`${dV} = true;`);
+        this.genArmBody(arm, v);
+        this.ind--;
+        this.w(`}`);
+      } else {
+        this.w(`${dV} = true;`);
+        this.genArmBody(arm, v);
+      }
+      this.forceObj = savedForce;
       this.ind--;
       this.w(`}`);
     }
@@ -939,6 +974,28 @@ public static class RT {
     public static object WriteFile(object pathO, object contentsO) {
         try { File.WriteAllText(AsStr(pathO), AsStr(contentsO)); return OkO((object)(long)AsStr(contentsO).Length); }
         catch (Exception e) { return ErrO(e.Message); }
+    }
+    public static object Exec(object cmdO, object argvO) {
+        try {
+            var psi = new System.Diagnostics.ProcessStartInfo();
+            psi.FileName = AsStr(cmdO);
+            psi.Arguments = "";
+            var av = (AbArr)argvO;
+            foreach (object a in av.Items) {
+                string s = AsStr(a);
+                string q = ((char)34).ToString();
+                string bs = ((char)92).ToString();
+                psi.Arguments += (psi.Arguments.Length == 0 ? "" : " ") + q + s.Replace(q, bs + q) + q;
+            }
+            psi.UseShellExecute = false;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            var p = System.Diagnostics.Process.Start(psi);
+            string so = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            if (p.ExitCode != 0) return ErrO("exit " + p.ExitCode + ": " + p.StandardError.ReadToEnd());
+            return OkO(so);
+        } catch (Exception e) { return ErrO(e.Message); }
     }
     public static object NowMs() { return (object)(long)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); }
     public static object CliArgs() {
@@ -1190,9 +1247,10 @@ public static class RT {
         return SomeO(a.Items[(int)i]);
     }
     public static object ArrGet(object o, object idx) {
-        var r = ArrGetOpt(o, idx);
-        if (r is AbEnum && ((AbEnum)r).Variant == "None") Trap("R0008", "read of taken slot");
-        return ((AbEnum)r).Payload[0];
+        var a = (AbArr)o; long i = AsLong(idx, "index");
+        if (i < 0 || i >= a.Items.Count) Trap("R0002", "index " + i + " out of bounds for length " + a.Items.Count);
+        if (a.Items[(int)i] is AbHole) Trap("R0008", "read of taken slot");
+        return a.Items[(int)i];
     }
     public static void ArrSet(object o, object idx, object v) {
         var a = (AbArr)o; long i = AsLong(idx, "index");

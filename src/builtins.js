@@ -64,6 +64,9 @@ export const MODULES = {
     env: {
       args: bif('args', [], mkArray(TyStr)),
     },
+    process: {
+      exec: bif('exec', [{ mode: 'in', name: 'cmd', ty: TyStr }, { mode: 'in', name: 'args', ty: mkArray(TyStr) }], BUILTIN_TYPES.Result.build([TyStr, TyStr])),
+    },
     mem: {
       live: bif('live', [], TyInt),
       allocs: bif('allocs', [], TyInt),

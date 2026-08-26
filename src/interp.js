@@ -4,6 +4,7 @@ import {
   mkF, unF, isFloatV, isIntV,
 } from './runtime.js';import { ArborError } from './diagnostics.js';
 import * as nodeFs from 'node:fs';
+import * as nodeChild from 'node:child_process';
 
 const MAX_SAFE = Number.MAX_SAFE_INTEGER;
 const MAX_DEPTH = 2000;
@@ -352,6 +353,14 @@ export class Interpreter {
       case 'std.fs.read_file': {
         try { return okOf(nodeFs.readFileSync(String(args[0]), 'utf8')); }
         catch (e2) { return errOf(String(e2.message ?? e2)); }
+      }
+      case 'std.process.exec': {
+        try {
+          const cmd = String(args[0]);
+          const rest = args.slice(1).map(s => String(s));
+          const outBuf = nodeChild.execFileSync(cmd, rest, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+          return okOf(String(outBuf));
+        } catch (e3) { return errOf(String(e3.message ?? e3)); }
       }
       case 'std.fs.write_file': {
         try { nodeFs.writeFileSync(String(args[0]), String(args[1])); return okOf(String(args[1]).length); }

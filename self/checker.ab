@@ -349,7 +349,7 @@ fn ck_call(c: inout Ck, e: in Node, st: inout [Scp]) {
         if mod_ == "env" and e.s1 == "args" {
           return
         }
-        if mod_ == "process" and e.s1 == "exit" {
+        if mod_ == "process" and (e.s1 == "exit" or e.s1 == "exec") {
           return
         }
         if mod_ == "io" {

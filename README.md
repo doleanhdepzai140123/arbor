@@ -38,11 +38,9 @@ node bin\arbor.js repl                       # interactive session
 npm test                                     # 25 conformance + 12 native parity + self-hosting parity
 
 # Self-hosting — ARBOR compiles ARBOR:
-node bin\arbor.js run self\self_analysis.ab  # ARBOR tokenizes its own lexer's source
-npm run test:bootstrap                       # the Thompson check:
-                                             #   seed -> arborsc.exe (native, written in ARBOR)
-                                             #   arborsc.exe compiles ITSELF -> identical behavior
-                                             #   programs it compiles match the reference VM exactly
+npm run build:arborc                         # build arborc.exe — the native compiler written in ARBOR
+arborc tests\selfhost_sample.ab -o demo.exe -exe
+demo.exe                                     # compiled by ARBOR, by ARBOR, for ARBOR
 node tests\self_hosted.mjs                   # self-hosted lexer == reference lexer, VM & native
 ```
 
